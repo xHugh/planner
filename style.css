@@ -42,6 +42,7 @@
   --bg: #eef2f8;
   --card: #ffffff;
   --card-2: #f8fafc;
+  --card-top: #ffffff;   /* 卡片渐变起点；深色主题必须覆盖，否则白字压在白底上 */
   --fill: #eef2f8;
   --ink: #0f172a;
   --ink-2: #334155;
@@ -90,68 +91,61 @@
 }
 
 /* ============================================================
-   深色主题：跟随系统
+   深色主题：由 <html data-theme> 驱动
+   （JS 在首屏前把 auto 解析成 light/dark 并写入，避免重复一套令牌）
    ============================================================ */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #080d16;
-    --card: #111827;
-    --card-2: #161f2e;
-    --fill: #1c2635;
-    --ink: #f1f5f9;
-    --ink-2: #dbe3ee;
-    --muted: #9fb0c6;
-    --faint: #8595ab;
-    --line: #263243;
+:root[data-theme="dark"] {
+  --bg: #080d16;
+  --card: #111827;
+  --card-2: #161f2e;
+  --card-top: #1a2434;
+  --fill: #1c2635;
+  --ink: #f1f5f9;
+  --ink-2: #dbe3ee;
+  --muted: #9fb0c6;
+  --faint: #8595ab;
+  --line: #263243;
 
-    --brand-1: #3b82f6;
-    --brand-2: #22d3ee;
-    --brand-deep: #020617;
+  --brand-1: #3b82f6;
+  --brand-2: #22d3ee;
+  --brand-deep: #020617;
 
-    --d-w1: #fb7185;
-    --d-w2: #60a5fa;
-    --d-w3: #a78bfa;
-    --d-w4: #34d399;
-    --d-r1: #fbbf24;
+  --d-w1: #fb7185;
+  --d-w2: #60a5fa;
+  --d-w3: #a78bfa;
+  --d-w4: #34d399;
+  --d-r1: #fbbf24;
 
-    --ok: #34d399;
-    --warn: #fbbf24;
-    --danger: #f87171;
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --danger: #f87171;
 
-    --sh-1: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 18px rgba(0, 0, 0, .34);
-    --sh-2: 0 2px 8px rgba(0, 0, 0, .4), 0 14px 36px rgba(0, 0, 0, .46);
-    --sh-brand: 0 8px 26px rgba(59, 130, 246, .34);
+  --sh-1: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 18px rgba(0, 0, 0, .34);
+  --sh-2: 0 2px 8px rgba(0, 0, 0, .4), 0 14px 36px rgba(0, 0, 0, .46);
+  --sh-brand: 0 8px 26px rgba(59, 130, 246, .34);
 
-    /* 深色下的玻璃层：由 --card 派生，跟随主题 */
-    --glass: rgba(22, 31, 46, .88);
-    --glass-bar: rgba(17, 24, 39, .82);
-    --glass-border: rgba(255, 255, 255, .09);
-  }
-
-  body::before {
-    background:
-      radial-gradient(620px 320px at 8% -6%, rgba(59, 130, 246, .2), transparent 62%),
-      radial-gradient(520px 300px at 102% 4%, rgba(34, 211, 238, .14), transparent 60%),
-      var(--bg);
-  }
-
-  .appbar.scrolled { border-bottom-color: var(--line); box-shadow: 0 4px 20px rgba(0, 0, 0, .4); }
-  .card { border-color: rgba(255, 255, 255, .06); }
-  .hero { box-shadow: 0 14px 40px rgba(0, 0, 0, .55); }
-  .btn.outline { border-color: var(--line); }
-  .btn.danger { background: rgba(239, 68, 68, .14); color: #fca5a5; }
-  .pick, .check, input[type="number"], input[type="text"], select { background: var(--fill); }
-  .pick { color: var(--ink-2); border-color: var(--line); }
-  .badge { background: var(--fill); }
-  .badge.primary { background: rgba(59, 130, 246, .18); color: #93c5fd; }
-  .badge.cardio { background: rgba(52, 211, 153, .16); color: #6ee7b7; }
-  .ring circle.bg { stroke: var(--fill); }
-  .empty, .stat, .gcard { box-shadow: var(--sh-1); }
-  .sheet { box-shadow: 0 -8px 40px rgba(0, 0, 0, .6); }
-  .sheet-mask { background: rgba(2, 6, 23, .7); }
-  .toast { background: rgba(30, 41, 59, .96); }
-  .gcard:active { box-shadow: var(--sh-2); }
+  /* 深色下的玻璃层 */
+  --glass: rgba(22, 31, 46, .88);
+  --glass-bar: rgba(17, 24, 39, .82);
+  --glass-border: rgba(255, 255, 255, .09);
 }
+
+:root[data-theme="dark"] body::before {
+  background:
+    radial-gradient(620px 320px at 8% -6%, rgba(59, 130, 246, .2), transparent 62%),
+    radial-gradient(520px 300px at 102% 4%, rgba(34, 211, 238, .14), transparent 60%),
+    var(--bg);
+}
+
+:root[data-theme="dark"] .appbar.scrolled { box-shadow: 0 4px 20px rgba(0, 0, 0, .4); }
+:root[data-theme="dark"] .hero { box-shadow: 0 14px 40px rgba(0, 0, 0, .55); }
+:root[data-theme="dark"] .btn.outline { border-color: var(--line); }
+:root[data-theme="dark"] .btn.danger { background: rgba(239, 68, 68, .14); color: #fca5a5; }
+:root[data-theme="dark"] .badge.primary { background: rgba(59, 130, 246, .18); color: #93c5fd; }
+:root[data-theme="dark"] .badge.cardio { background: rgba(52, 211, 153, .16); color: #6ee7b7; }
+:root[data-theme="dark"] .sheet-mask { background: rgba(2, 6, 23, .7); }
+:root[data-theme="dark"] .toast { background: rgba(30, 41, 59, .96); }
+:root[data-theme="dark"] .theme-btn { color: var(--brand-2); }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
@@ -201,6 +195,13 @@ body::before {
   border-bottom-color: var(--line);
   box-shadow: 0 4px 20px rgba(15, 23, 42, .05);
 }
+.appbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.appbar-brand { min-width: 0; }
 .appbar-title {
   font-size: 21px;
   font-weight: 800;
@@ -216,6 +217,32 @@ body::before {
   margin-top: 1px;
   font-weight: 500;
 }
+
+/* ---------- 主题切换按钮 ---------- */
+.theme-btn {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--card);
+  color: var(--brand-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform .18s cubic-bezier(.34, 1.56, .64, 1),
+    background .2s ease, border-color .2s ease;
+}
+.theme-btn:active { transform: scale(.88); }
+.theme-btn svg { width: 21px; height: 21px; grid-area: 1 / 1; }
+/* 三个图标叠在同一格，按当前状态显示其中一个 */
+.theme-btn { display: grid; place-items: center; }
+.theme-btn svg { grid-area: 1 / 1; }
+.theme-btn .ico-auto, .theme-btn .ico-light, .theme-btn .ico-dark { opacity: 0; transition: opacity .2s ease; }
+.theme-btn[data-mode="auto"] .ico-auto,
+.theme-btn[data-mode="light"] .ico-light,
+.theme-btn[data-mode="dark"] .ico-dark { opacity: 1; }
 
 main { padding: 14px 16px 24px; }
 
@@ -265,16 +292,14 @@ main { padding: 14px 16px 24px; }
 
 /* ---------- 卡片：极浅渐变而非纯白，制造层次 ---------- */
 .card {
-  background: linear-gradient(168deg, #ffffff 0%, var(--card-2) 100%);
+  background: linear-gradient(168deg, var(--card-top) 0%, var(--card-2) 100%);
   border-radius: var(--r-lg);
   padding: 18px;
   margin-bottom: 14px;
   box-shadow: var(--sh-1);
   border: 1px solid rgba(255, 255, 255, .9);
 }
-@media (prefers-color-scheme: dark) {
-  .card { background: linear-gradient(168deg, #141d2b 0%, var(--card) 100%); border-color: rgba(255, 255, 255, .06); }
-}
+:root[data-theme="dark"] .card { border-color: rgba(255, 255, 255, .06); }
 .card-title {
   display: flex;
   justify-content: space-between;
@@ -562,7 +587,7 @@ input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; marg
 input::placeholder { color: var(--faint); font-weight: 500; }
 input:focus, select:focus {
   outline: none;
-  background: #fff;
+  background: var(--card);
   border-color: var(--brand-1);
   box-shadow: 0 0 0 4px rgba(37, 99, 235, .12);
 }
@@ -586,7 +611,7 @@ input:focus, select:focus {
   height: 34px;
   border-radius: 50%;
   border: 2px solid var(--line);
-  background: #fff;
+  background: var(--card);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -625,7 +650,7 @@ input:focus, select:focus {
   padding: 10px 18px;
   border-radius: 999px;
   border: 1.5px solid var(--line);
-  background: #fff;
+  background: var(--card);
   font-size: 14px;
   font-weight: 700;
   color: var(--ink-2);
@@ -736,7 +761,7 @@ table.data tr:last-child td { border-bottom: 0; }
   transition: transform .22s cubic-bezier(.34,1.56,.64,1), box-shadow .22s ease;
 }
 .gcard:active { transform: scale(.97); box-shadow: var(--sh-2); }
-@media (prefers-color-scheme: dark) { .gcard { border-color: rgba(255, 255, 255, .06); } }
+:root[data-theme="dark"] .gcard { border-color: rgba(255, 255, 255, .06); }
 .gcard img {
   width: 100%;
   aspect-ratio: 1 / 1;

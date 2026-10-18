@@ -13,6 +13,49 @@
   var subEl = document.getElementById("appbarSub");
   var bar = document.querySelector(".appbar");
 
+  /* ---------------- 主题：auto / light / dark ---------------- */
+  var THEME_KEY = "gym4.theme";
+  var themeBtn = document.getElementById("themeBtn");
+  var THEME_LABEL = { auto: "跟随系统", light: "浅色", dark: "深色" };
+
+  function getTheme() {
+    try { return localStorage.getItem(THEME_KEY) || "auto"; } catch (e) { return "auto"; }
+  }
+  function systemDark() {
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+  function applyTheme(mode, announce) {
+    var dark = mode === "dark" || (mode === "auto" && systemDark());
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+    themeBtn.setAttribute("data-mode", mode);
+    var shown = mode === "auto" ? "跟随系统（当前" + (dark ? "深色" : "浅色") + "）" : THEME_LABEL[mode];
+    themeBtn.setAttribute("aria-label", "主题：" + shown + "，点击切换");
+    themeBtn.title = shown;
+    // 状态栏颜色同步，避免与页面配色割裂
+    var meta = document.querySelector('meta[name="theme-color"]:not([media])');
+    if (!meta) {
+      meta = document.createElement("meta");
+      meta.setAttribute("name", "theme-color");
+      document.head.appendChild(meta);
+    }
+    meta.setAttribute("content", dark ? "#080d16" : "#eef2f8");
+    if (announce) toast("主题：" + shown);
+  }
+  themeBtn.addEventListener("click", function () {
+    var order = ["auto", "light", "dark"];
+    var next = order[(order.indexOf(getTheme()) + 1) % order.length];
+    try { localStorage.setItem(THEME_KEY, next); } catch (e) {}
+    applyTheme(next, true);
+  });
+  // auto 模式下跟随系统实时变化
+  if (window.matchMedia) {
+    var mq = window.matchMedia("(prefers-color-scheme: dark)");
+    var onSys = function () { if (getTheme() === "auto") applyTheme("auto", false); };
+    if (mq.addEventListener) mq.addEventListener("change", onSys);
+    else if (mq.addListener) mq.addListener(onSys);
+  }
+  applyTheme(getTheme(), false);
+
   /* ---------------- 存储 ---------------- */
   function loadDB() {
     try {
@@ -297,7 +340,7 @@
       '<defs><linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">' +
       '<stop offset="0%" stop-color="#2563eb"/><stop offset="100%" stop-color="#06b6d4"/>' +
       "</linearGradient></defs>" +
-      '<circle cx="29" cy="29" r="' + R + '" fill="none" stroke="#eef2f8" stroke-width="6"/>' +
+      '<circle cx="29" cy="29" r="' + R + '" fill="none" stroke="var(--fill)" stroke-width="6"/>' +
       '<circle cx="29" cy="29" r="' + R + '" fill="none" stroke="url(#ringGrad)" stroke-width="6" stroke-linecap="round"' +
       ' stroke-dasharray="' + C.toFixed(1) + '" stroke-dashoffset="' + (C * (1 - pct / 100)).toFixed(1) + '"/>' +
       "</svg>" +
@@ -506,11 +549,17 @@
         var w = el("input"); w.type = "number"; w.inputMode = "decimal"; w.step = "0.5"; w.placeholder = "kg"; w.value = s.weight;
         var reps = el("input"); reps.type = "number"; reps.inputMode = "numeric"; reps.placeholder = m.lo + "-" + m.hi; reps.value = s.reps;
         var cell = el("div", "done-cell");
-        var ck = el("button", "check" + (s.done ? " on" : ""), "✓");
+        // 对勾由 CSS ::before 绘制，这里不再放文本，避免两份重叠溢出
+        var ck = el("button", "check" + (s.done ? " on" : ""));
+        ck.type = "button";
+        ck.setAttribute("aria-label", (s.done ? "取消完成 第" : "标记完成 第") + (si + 1) + " 组");
+        ck.setAttribute("aria-pressed", s.done ? "true" : "false");
         ck.onclick = function () {
           s.done = !s.done;
           if (s.done && !s.reps) s.reps = m.lo;
           ck.classList.toggle("on", s.done);
+          ck.setAttribute("aria-label", (s.done ? "取消完成 第" : "标记完成 第") + (si + 1) + " 组");
+          ck.setAttribute("aria-pressed", s.done ? "true" : "false");
           saveDB();
         };
         w.oninput = function () { s.weight = w.value; saveDB(); };
