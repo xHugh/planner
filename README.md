@@ -48,28 +48,36 @@ python3 -m http.server 8765
 ```
 gym-pwa/
 ├── index.html      页面骨架、底部导航
-├── style.css       样式（Material 风格深蓝主题）
+├── style.css       设计系统（令牌、深浅双主题、无障碍规格）
 ├── data.js         训练计划数据（唯一数据源，改计划只改这里）
-├── app.js          全部逻辑：路由、记录、图表、存储
+├── app.js          全部逻辑：路由、记录、图表、存储、主题
 ├── sw.js           Service Worker，离线缓存
 ├── manifest.json   PWA 清单
-├── icons/          应用图标
-└── img/            器械实拍图（320×320，已压缩）
+├── fonts/          Barlow Condensed 拉丁子集（数字与计时用）
+└── icons/          应用图标（app-icon.svg 为母版，其余由它渲染）
 ```
+
+整个 App 无外部依赖、无构建步骤，唯一的第三方资源是字体（Barlow Condensed，SIL OFL 1.1，见 `fonts/README.txt`）。
 
 ## 修改训练计划
 
 只改 `data.js` 里的 `PLAN.days`：
 
 ```js
-{ name: "坐姿推胸机", img: "chest_press", sets: 4, lo: 8, hi: 10, tip: "技术要点" }
+{ name: "坐姿推胸机", sets: 4, lo: 8, hi: 10, tip: "技术要点" }
 ```
 
-- `img` 用 `img/` 目录里的文件名（不带后缀），没有图就写 `null`；
+- `lo` / `hi` 是次数区间；两者相同则只显示一个数字；
+- `cardio: true` 表示按分钟计的有氧动作；
 - 改完刷新页面即可。已保存的历史记录不受影响（按动作名匹配）。
 
-## 图片授权
+## 图标
 
-15 张器械图来自 Wikimedia Commons，授权为 CC0 / CC BY / CC BY-SA，作者与原始链接见 App 内「器械」页底部。
+`icons/app-icon.svg` 是母版。改完用它重新渲染各尺寸 PNG：
 
-**如果要对外分享或发布这个 App，CC BY 与 CC BY-SA 的图片必须保留署名并注明授权**（CC BY-SA 的改编作品需同协议共享）。不想处理授权的话，把 `img/` 换成自己拍的照片即可。
+```bash
+# 尺寸、圆角、maskable 安全区都在脚本里定义
+node scripts/render-icons.js
+```
+
+`icon-512-maskable.png` 供 Android 自适应图标使用，内容缩到中心 74% 以内，保证圆形 / squircle 裁切不丢内容。

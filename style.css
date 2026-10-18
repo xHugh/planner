@@ -261,7 +261,7 @@ main { padding: 14px 16px 24px; }
   width: calc(100% - 32px);
   max-width: 528px;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 4px;
   padding: 7px;
   background: var(--glass);
@@ -483,23 +483,29 @@ main { padding: 14px 16px 24px; }
   border-top: 1px solid var(--line);
 }
 .move:first-of-type { border-top: 0; }
-.move-thumb {
-  width: 58px;
-  height: 58px;
-  border-radius: var(--r-md);
-  object-fit: cover;
-  background: var(--fill);
-  flex: 0 0 58px;
-  box-shadow: var(--sh-1);
-}
-.move-thumb.placeholder {
+/* 动作序号徽标：替代原来的缩略图 */
+.move-badge {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  flex: 0 0 44px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--faint);
-  font-size: 10.5px;
-  text-align: center;
-  line-height: 1.25;
+  font-family: var(--font-num);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--brand-1);
+  background: var(--fill);
+  border: 1px solid var(--line);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5);
+}
+:root[data-theme="dark"] .move-badge {
+  color: var(--brand-2);
+  background: rgba(59, 130, 246, .14);
+  border-color: rgba(59, 130, 246, .3);
+  box-shadow: none;
 }
 .move-body { flex: 1; min-width: 0; }
 .move-name { font-size: 16px; font-weight: 700; letter-spacing: -.2px; }

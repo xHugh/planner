@@ -3,7 +3,6 @@
   "use strict";
 
   var PLAN = window.PLAN;
-  var GAL = window.GALLERY;
   var DB_KEY = "gym4.db.v1";
   var TAB = "plan";
   var view = document.getElementById("view");
@@ -187,7 +186,6 @@
     if (TAB === "plan") renderPlan();
     else if (TAB === "log") renderLog();
     else if (TAB === "progress") renderProgress();
-    else if (TAB === "gallery") renderGallery();
   }
 
   /* ---------------- 计划页 ---------------- */
@@ -309,11 +307,9 @@
     var html = '<div class="card-title" style="font-size:18px">' + esc(d.name) + "</div>" +
       '<p class="card-sub" style="margin-bottom:12px">' + esc(d.focus) + "</p>";
     d.moves.forEach(function (m, i) {
-      var thumb = m.img
-        ? '<img class="move-thumb" src="img/' + m.img + '.jpg" alt="">'
-        : '<div class="move-thumb placeholder">无图</div>';
+      var thumb = '<div class="move-badge">' + (i + 1) + "</div>";
       html += '<div class="move">' + thumb +
-        '<div class="move-body"><div class="move-name">' + (i + 1) + ". " + esc(m.name) +
+        '<div class="move-body"><div class="move-name">' + esc(m.name) +
         (i === 0 ? '<span class="badge primary">主项</span>' : "") +
         (m.cardio ? '<span class="badge cardio">有氧</span>' : "") + "</div>" +
         '<div class="move-meta">' + m.sets + " 组 × " + (m.lo === m.hi ? m.lo : m.lo + "-" + m.hi) + (m.cardio ? " 分钟" : " 次") + "</div>" +
@@ -500,9 +496,6 @@
     view.innerHTML = "";
     var dr = wo.draft;
 
-    // 首屏：主项器械图先行加载，避免滚动时才闪出
-    d.moves.forEach(function (m) { if (m.img) { var p = new Image(); p.src = "img/" + m.img + ".jpg"; } });
-
     var head = el("div", "card");
     var totalSets = 0, doneSets = 0;
     dr.moves.forEach(function (m) { m.sets.forEach(function (s) { totalSets++; if (s.done) doneSets++; }); });
@@ -531,7 +524,7 @@
         var pw = prev.move.sets.filter(function (x) { return x.weight; }).map(function (x) { return x.weight + "kg×" + (x.reps || "?"); }).slice(0, 3).join(" / ");
         if (pw) prevTxt = "上次 " + fmtDate(prev.date) + "：" + pw;
       }
-      var thumb = m.img ? '<img class="move-thumb" src="img/' + m.img + '.jpg" alt="">' : '<div class="move-thumb placeholder">无图</div>';
+      var thumb = '<div class="move-badge">' + (mi + 1) + "</div>";
       card.innerHTML =
         '<div class="move" style="border:0;padding:0">' + thumb + '<div class="move-body">' +
         '<div class="move-name">' + esc(m.name) + "</div>" +
@@ -902,39 +895,6 @@
       fr.readAsText(f);
     };
     inp.click();
-  }
-
-  /* ---------------- 器械图鉴 ---------------- */
-  function renderGallery() {
-    view.innerHTML = "";
-    subEl.textContent = "固定器械实拍图（Wikimedia Commons）";
-    var grid = el("div", "grid");
-    GAL.forEach(function (g) {
-      var c = el("button", "gcard");
-      c.type = "button";
-      c.innerHTML = '<img src="img/' + g.key + '.jpg" alt="' + esc(g.name) + '" loading="lazy">' +
-        '<div class="gbody"><div class="gname">' + esc(g.name) + '<span class="badge">' + esc(g.day) + "</span></div>" +
-        '<div class="gtip">' + esc(g.tip) + "</div></div>";
-      c.onclick = function () {
-        sheetBody.innerHTML = '<div class="card-title">' + esc(g.name) + "</div>" +
-          '<p class="card-sub" style="margin-bottom:10px">' + esc(g.day) + "</p>" +
-          '<img class="big" src="img/' + g.key + '.jpg" alt="">' +
-          '<p class="move-tip" style="margin-top:10px">' + esc(g.tip) + "</p>";
-        showSheet();
-      };
-      grid.appendChild(c);
-    });
-    view.appendChild(grid);
-
-    var cc = el("div", "card");
-    cc.innerHTML = '<div class="card-title">ℹ️ 图片来源与授权</div><p class="card-sub">以下图片均来自 Wikimedia Commons；对外分享时请保留署名与授权</p>' +
-      window.CREDITS.map(function (x) {
-        return '<div class="row"><div class="row-main"><div class="row-title" style="font-size:13px">' + esc(x.name) + "</div>" +
-          '<div class="row-sub">' + esc(x.artist) + " · " + esc(x.license) + "</div></div>" +
-          '<a class="btn sm outline" href="' + esc(x.page) + '" target="_blank" rel="noopener">原图</a></div>';
-      }).join("");
-    cc.style.marginTop = "12px";
-    view.appendChild(cc);
   }
 
   /* ---------------- 底部弹层 ---------------- */

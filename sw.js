@@ -1,5 +1,5 @@
 /* 铁馆计划 service worker：离线缓存 */
-var CACHE = "gym4-v7";
+var CACHE = "gym4-v8";
 var ASSETS = [
   "./",
   "./index.html",
@@ -12,22 +12,8 @@ var ASSETS = [
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/icon-512-maskable.png",
-  "./icons/app-icon.svg",
-  "./img/chest_press.jpg",
-  "./img/incline_press.jpg",
-  "./img/pec_deck.jpg",
-  "./img/chest_fly.jpg",
-  "./img/lat_pulldown.jpg",
-  "./img/lat_pulldown_alt.jpg",
-  "./img/seated_row.jpg",
-  "./img/shoulder_press.jpg",
-  "./img/leg_press.jpg",
-  "./img/leg_press_alt.jpg",
-  "./img/smith_machine.jpg",
-  "./img/hack_squat.jpg",
-  "./img/leg_extension.jpg",
-  "./img/leg_curl.jpg",
-  "./img/calf_raise.jpg"
+  "./icons/apple-touch-icon.png",
+  "./icons/app-icon.svg"
 ];
 
 self.addEventListener("install", function (e) {
