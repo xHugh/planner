@@ -77,11 +77,12 @@
   function moveKey(di, mi) { return di + ":" + mi; }
 
   // 该动作在历史记录里的最近一次（按日期倒序找第一个有该动作的记录）
+  // beforeDate 为"当天"时，同日已完成的训练也要参与，否则一天练两次就取不到参考值
   function lastEntry(moveName, beforeDate) {
     var list = db.sessions.slice().sort(function (a, b) { return a.date < b.date ? 1 : -1; });
     for (var i = 0; i < list.length; i++) {
       var s = list[i];
-      if (beforeDate && s.date >= beforeDate) continue;
+      if (beforeDate && s.date > beforeDate) continue;
       for (var j = 0; j < s.moves.length; j++) {
         if (s.moves[j].name === moveName) return { date: s.date, move: s.moves[j] };
       }
@@ -156,7 +157,7 @@
 
     var hero = el("div", "hero");
     hero.innerHTML =
-      '<div class="eyebrow">今天是 ' + PLAN.weekdays[weekIndex(now)] + " · " + pad(now.getMonth() + 1) + "月" + now.getDate() + "日</div>" +
+      '<div class="eyebrow">📅 ' + PLAN.weekdays[weekIndex(now)] + " · " + pad(now.getMonth() + 1) + "月" + now.getDate() + "日</div>" +
       "<h2>" + (t ? esc(t.name) : "休息日") + "</h2>" +
       "<p>" + (t ? esc(t.focus) + " · " + t.moves.length + " 个动作" : "建议 20-30 分钟低强度有氧，或完全休息") + "</p>";
     if (t) {
@@ -174,6 +175,7 @@
     var week = el("div", "week");
     PLAN.week.forEach(function (id, i) {
       var c = el("div", "daychip" + (i === weekIndex(now) ? " today" : "") + (id ? "" : " rest"));
+      if (id) c.setAttribute("data-day", id);
       c.innerHTML = "<b>" + (id ? esc(dayById(id).short) : "休") + "</b><span>" + PLAN.weekdays[i].slice(1) + "</span>";
       c.onclick = function () { if (id) showPlanSheet(id); };
       week.appendChild(c);
@@ -185,12 +187,14 @@
       var doneCount = sessionsOfDay(d.id).length;
       var c = el("div", "card");
       var setsTotal = d.moves.reduce(function (a, m) { return a + m.sets; }, 0);
+      var accent = "var(--d-" + d.id + ")";
+      c.style.borderTop = "3px solid " + accent;
       c.innerHTML =
         '<div class="card-title"><span>' + esc(d.name) + "</span>" +
         (doneCount ? '<span class="badge primary">已练 ' + doneCount + " 次</span>" : "") + "</div>" +
         '<p class="card-sub">' + esc(d.focus) + " · " + d.moves.length + " 个动作 · " + setsTotal + " 组</p>";
-      var btn = el("button", "btn sm outline", "查看动作");
-      btn.style.marginTop = "10px";
+      var btn = el("button", "btn sm outline", "查看动作 →");
+      btn.style.marginTop = "12px";
       btn.onclick = function (e) { e.stopPropagation(); showPlanSheet(d.id); };
       c.appendChild(btn);
       c.onclick = function () { showPlanSheet(d.id); };
@@ -199,7 +203,7 @@
 
     // 规则
     var rc = el("div", "card");
-    rc.innerHTML = '<div class="card-title">减伤规则</div><ol style="margin:10px 0 0 18px;padding:0;font-size:13px;line-height:1.75;color:var(--muted)">' +
+    rc.innerHTML = '<div class="card-title">🛡 减伤规则</div><ol style="margin:12px 0 0 18px;padding:0;font-size:13px;line-height:1.85;color:var(--muted)">' +
       PLAN.rules.map(function (r) { return "<li>" + esc(r) + "</li>"; }).join("") + "</ol>";
     view.appendChild(rc);
   }
@@ -230,6 +234,23 @@
     showSheet();
   }
 
+  /* ---------------- 训练完成度圆环 ---------------- */
+  function ringSvg(done, total) {
+    var pct = total ? Math.round((done / total) * 100) : 0;
+    var R = 23;
+    var C = 2 * Math.PI * R;
+    return '<div class="ring">' +
+      '<svg viewBox="0 0 58 58" aria-hidden="true">' +
+      '<defs><linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">' +
+      '<stop offset="0%" stop-color="#2563eb"/><stop offset="100%" stop-color="#06b6d4"/>' +
+      "</linearGradient></defs>" +
+      '<circle cx="29" cy="29" r="' + R + '" fill="none" stroke="#eef2f8" stroke-width="6"/>' +
+      '<circle cx="29" cy="29" r="' + R + '" fill="none" stroke="url(#ringGrad)" stroke-width="6" stroke-linecap="round"' +
+      ' stroke-dasharray="' + C.toFixed(1) + '" stroke-dashoffset="' + (C * (1 - pct / 100)).toFixed(1) + '"/>' +
+      "</svg>" +
+      '<div class="lbl">' + pct + '%</div></div>';
+  }
+
   /* ---------------- 记录页 ---------------- */
   function renderLog() {
     subEl.textContent = "选择日期与训练日";
@@ -239,7 +260,7 @@
     if (!guess) guess = "w1";
 
     var c = el("div", "card");
-    c.innerHTML = '<div class="card-title">开始一次训练</div><p class="card-sub">数据只存在这台设备上</p>';
+    c.innerHTML = '<div class="card-title">▶ 开始一次训练</div><p class="card-sub">记录只保存在这台设备，不上传</p>';
 
     var lbl1 = el("label", "field-label", "训练日期");
     var inpDate = el("input");
@@ -259,8 +280,8 @@
     });
     chips.dataset.pick = guess;
 
-    var go = el("button", "btn solid full", "开始记录");
-    go.style.marginTop = "16px";
+    var go = el("button", "btn solid full", "开始记录 →");
+    go.style.marginTop = "18px";
     go.onclick = function () {
       if (!inpDate.value) { toast("请选择日期"); return; }
       openWorkout(chips.dataset.pick, inpDate.value);
@@ -283,8 +304,10 @@
         var doneSets = 0, total = 0;
         dr.moves.forEach(function (m) { m.sets.forEach(function (s) { total++; if (s.done) doneSets++; }); });
         var row = el("div", "row");
+        row.style.borderLeft = "3px solid var(--d-" + dr.dayId + ")";
+        row.style.paddingLeft = "12px";
         row.innerHTML = '<div class="row-main"><div class="row-title">' + esc(d.name) + " · " + fmtDate(dr.date) + "</div>" +
-          '<div class="row-sub">已完成 ' + doneSets + "/" + total + " 组</div></div>";
+          '<div class="row-sub">已完成 ' + doneSets + "/" + total + ' 组</div></div>';
         var rb = el("button", "btn sm solid", "继续");
         rb.onclick = function () { openWorkout(dr.dayId, dr.date, true); };
         row.appendChild(rb);
@@ -295,7 +318,7 @@
     // 历史
     view.appendChild(el("div", "section-h", "训练历史"));
     if (!db.sessions.length) {
-      view.appendChild(el("div", "empty", "还没有记录。<br>做完第一次训练后，这里会显示历史。"));
+      view.appendChild(el("div", "empty", "<strong>🏋️</strong>还没有记录。<br>做完第一次训练后，这里会显示历史。"));
       return;
     }
     var list = el("div", "card");
@@ -308,8 +331,11 @@
         });
       });
       var row = el("div", "row");
+      row.style.borderLeft = "3px solid var(--d-" + s.dayId + ")";
+      row.style.paddingLeft = "12px";
       row.innerHTML = '<div class="row-main"><div class="row-title">' + esc(d ? d.name : s.dayId) + " · " + fmtDate(s.date) + "</div>" +
-        '<div class="row-sub">' + sets + " 组 · 容量 " + Math.round(vol) + " kg · 时长 " + (s.durationMin || "—") + " 分</div></div>";
+        '<div class="row-sub">' + sets + " 组 · 容量 " + Math.round(vol) + " kg · 时长 " + (s.durationMin || "—") + " 分" +
+        (s.maxPain >= 4 ? ' · <span style="color:var(--danger);font-weight:700">疼痛 ' + s.maxPain + "/10</span>" : "") + "</div></div>";
       var del = el("button", "btn sm danger", "删除");
       del.onclick = function (e) {
         e.stopPropagation();
@@ -379,9 +405,11 @@
     var totalSets = 0, doneSets = 0;
     dr.moves.forEach(function (m) { m.sets.forEach(function (s) { totalSets++; if (s.done) doneSets++; }); });
     head.innerHTML =
-      '<div class="wo-head"><div><div class="card-title">' + esc(d.name) + "</div>" +
-      '<p class="card-sub">' + dr.date + " · 已完成 " + doneSets + "/" + totalSets + " 组</p></div>" +
-      '<div id="timer" class="timer">--:--</div></div>';
+      '<div class="wo-head"><div style="flex:1;min-width:0"><div class="card-title">' + esc(d.name) + "</div>" +
+      '<p class="card-sub" id="woSub">' + dr.date + " · 已完成 " + doneSets + "/" + totalSets + " 组</p></div>" +
+      '<div style="display:flex;align-items:center;gap:10px">' +
+      ringSvg(doneSets, totalSets) +
+      '<div id="timer" class="timer">--:--</div></div></div>';
     view.appendChild(head);
 
     var bar = el("div");
@@ -506,14 +534,23 @@
     fab.onclick = function () { finishWorkout(d); };
     view.appendChild(fab);
 
-    // 重新计算完成数（勾选后刷新头部计数）
+    // 勾选后实时刷新完成数与进度环
     var counter = function () {
-      var done = 0, total = 0;
-      dr.moves.forEach(function (m) { m.sets.forEach(function (s) { total++; if (s.done) done++; }); });
-      head.querySelector(".card-sub").textContent = dr.date + " · 已完成 " + done + "/" + total + " 组";
-      return done;
+      var c = countDone(dr);
+      var sub = head.querySelector("#woSub");
+      if (sub) sub.textContent = dr.date + " · 已完成 " + c.done + "/" + c.total + " 组";
+      var ring = head.querySelector(".ring");
+      if (ring) {
+        var pct = c.total ? Math.round((c.done / c.total) * 100) : 0;
+        var C = 2 * Math.PI * 23;
+        var fg = ring.querySelector("svg circle:last-child");
+        if (fg) fg.setAttribute("stroke-dashoffset", (C * (1 - pct / 100)).toFixed(1));
+        var lbl = ring.querySelector(".lbl");
+        if (lbl) lbl.textContent = pct + "%";
+      }
+      return c.done;
     };
-    head.querySelector(".card-sub").textContent = dr.date + " · 已完成 " + countDone(dr).done + "/" + countDone(dr).total + " 组";
+    counter();
     wo.counter = counter;
     fin.addEventListener("click", function () { finishWorkout(d); });
     view.appendChild(fin);
@@ -595,7 +632,7 @@
 
     // 容量趋势
     var c1 = el("div", "card");
-    c1.innerHTML = '<div class="card-title">训练容量趋势</div><p class="card-sub">重量 × 次数，按每次训练统计（kg）</p>';
+    c1.innerHTML = '<div class="card-title">📈 训练容量趋势</div><p class="card-sub">重量 × 次数，按每次训练统计（kg）</p>';
     var cv1 = el("canvas");
     c1.appendChild(cv1);
     view.appendChild(c1);
@@ -607,7 +644,7 @@
 
     // 主项最佳组
     var c2 = el("div", "card");
-    c2.innerHTML = '<div class="card-title">主项最佳组</div><p class="card-sub">每个动作历史最重的有效组（重量 × 次数）</p>';
+    c2.innerHTML = '<div class="card-title">🏆 主项最佳组</div><p class="card-sub">每个动作历史最重的有效组（重量 × 次数）</p>';
     var best = {};
     list.forEach(function (s) {
       s.moves.forEach(function (m) {
@@ -633,19 +670,29 @@
 
     // 疼痛趋势
     var c3 = el("div", "card");
-    c3.innerHTML = '<div class="card-title">疼痛趋势</div><p class="card-sub">每次训练的最高疼痛评分（0-10），≥4 应先停练该动作</p>';
+    c3.innerHTML = '<div class="card-title">❤️ 疼痛趋势</div><p class="card-sub">每次训练的最高疼痛评分（0-10），≥4 应先停练该动作</p>';
     var cv3 = el("canvas");
     c3.appendChild(cv3);
     view.appendChild(c3);
     drawBars(cv3, list.map(function (s, i) { return { label: fmtDate(s.date), value: s.maxPain || 0 }; }), { max: 10, colorDanger: true });
 
+    var warnCount = list.filter(function (s) { return (s.maxPain || 0) >= 4; }).length;
+    if (warnCount) {
+      var wa = el("div", "card");
+      wa.style.background = "linear-gradient(135deg, #fef2f2, #fff)";
+      wa.style.border = "1px solid #fecaca";
+      wa.innerHTML = '<div class="card-title" style="color:#dc2626">⚠️ 有 ' + warnCount +
+        " 次训练疼痛 ≥4</div><p class=\"card-sub\">建议检查动作幅度、重量与恢复情况；疼痛持续不缓解请咨询专业人士。</p>";
+      view.appendChild(wa);
+    }
+
     // 导出
-    var exp = el("button", "btn outline full", "导出数据（JSON）");
+    var exp = el("button", "btn outline full", "⬇ 导出数据（JSON）");
     exp.style.marginTop = "6px";
     exp.onclick = exportData;
     view.appendChild(exp);
 
-    var imp = el("button", "btn outline full", "导入数据（JSON）");
+    var imp = el("button", "btn outline full", "⬆ 导入数据（JSON）");
     imp.style.marginTop = "10px";
     imp.onclick = importData;
     view.appendChild(imp);
@@ -666,8 +713,8 @@
     var max = opt.max || Math.max.apply(null, data.map(function (d) { return d.value; })) || 1;
     max = max * 1.15;
     // 网格
-    ctx.strokeStyle = "#e6eaf1";
-    ctx.fillStyle = "#8a94a3";
+    ctx.strokeStyle = "#eef2f8";
+    ctx.fillStyle = "#94a3b8";
     ctx.font = "10px -apple-system, sans-serif";
     ctx.lineWidth = 1;
     for (var g = 0; g <= 3; g++) {
@@ -683,11 +730,23 @@
       var h = (H - padT - padB) * Math.min(1, d.value / max);
       var x = padL + step * i + (step - bw) / 2;
       var y = H - padB - h;
-      ctx.fillStyle = opt.colorDanger && d.value >= 4 ? "#c0392b" : "#2E6FA3";
+      if (opt.colorDanger && d.value >= 4) {
+        var gd = ctx.createLinearGradient(x, y, x, y + Math.max(h, 1));
+        gd.addColorStop(0, "#f87171");
+        gd.addColorStop(1, "#dc2626");
+        ctx.fillStyle = gd;
+      } else if (h > 0) {
+        var g = ctx.createLinearGradient(x, y, x, y + h);
+        g.addColorStop(0, "#38bdf8");
+        g.addColorStop(1, "#2563eb");
+        ctx.fillStyle = g;
+      } else {
+        ctx.fillStyle = "#e2e8f0";
+      }
       roundRect(ctx, x, y, bw, Math.max(h, 1), 4);
       ctx.fill();
       if (n <= 10 || i % Math.ceil(n / 8) === 0) {
-        ctx.fillStyle = "#8a94a3";
+        ctx.fillStyle = "#94a3b8";
         ctx.textAlign = "center";
         ctx.fillText(d.label, x + bw / 2, H - padB + 14);
         ctx.textAlign = "left";
@@ -759,7 +818,7 @@
     view.appendChild(grid);
 
     var cc = el("div", "card");
-    cc.innerHTML = '<div class="card-title">图片来源与授权</div><p class="card-sub">以下图片均来自 Wikimedia Commons；对外分享时请保留署名与授权</p>' +
+    cc.innerHTML = '<div class="card-title">ℹ️ 图片来源与授权</div><p class="card-sub">以下图片均来自 Wikimedia Commons；对外分享时请保留署名与授权</p>' +
       window.CREDITS.map(function (x) {
         return '<div class="row"><div class="row-main"><div class="row-title" style="font-size:13px">' + esc(x.name) + "</div>" +
           '<div class="row-sub">' + esc(x.artist) + " · " + esc(x.license) + "</div></div>" +
