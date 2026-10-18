@@ -1,5 +1,5 @@
 /* 铁馆计划 service worker：离线缓存 */
-var CACHE = "gym4-v6";
+var CACHE = "gym4-v7";
 var ASSETS = [
   "./",
   "./index.html",
@@ -11,6 +11,8 @@ var ASSETS = [
   "./fonts/barlow-condensed-700.woff2",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
+  "./icons/icon-512-maskable.png",
+  "./icons/app-icon.svg",
   "./img/chest_press.jpg",
   "./img/incline_press.jpg",
   "./img/pec_deck.jpg",
