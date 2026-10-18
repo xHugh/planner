@@ -876,3 +876,25 @@ main > *:nth-child(n+6) { animation-delay: .22s; }
     transition-duration: .001ms !important;
   }
 }
+
+/* ---------- 训练页布局改版 ---------- */
+/* 汇总卡：RIR/疼痛/备注收拢于此，动作卡只留组数表格 */
+.wo-summary .field-label { margin-top: 16px; }
+.wo-summary .field-label:first-of-type { margin-top: 14px; }
+.wo-summary input[type="text"] { margin-top: 2px; }
+
+/* 动作卡之间更紧凑：改版后卡数量多但每卡内容少 */
+.card.wo-move { margin-bottom: 10px; padding: 14px 16px; }
+
+/* 上次成绩内联显示，不再单独占一行 */
+.move-meta .prev { color: var(--faint); font-weight: 500; }
+.move-meta .prev::before { content: "·"; margin: 0 4px 0 2px; color: var(--line); }
+
+/* 顶部日期行不折行：空间不足时压缩字号而不是换行 */
+.wo-head .card-sub { white-space: nowrap; }
+@media (max-width: 380px) {
+  .wo-head .card-sub { font-size: 13px; letter-spacing: -.2px; }
+}
+@media (max-width: 345px) {
+  .wo-head .card-sub { font-size: 12px; }
+}

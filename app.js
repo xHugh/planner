@@ -156,14 +156,26 @@
     if (!resume && db.drafts[k] && d0) {
       var c0 = countDone(db.drafts[k]);
       if (c0.done > 0) {
-        return { key: k, dayId: dayId, date: date, startedAt: null, fresh: true, moves: emptyMoves(d0, date) };
+        return { key: k, dayId: dayId, date: date, startedAt: null, fresh: true, moves: emptyMoves(d0, date), rir: 2, pain: 0, note: "" };
       }
     }
     if (!db.drafts[k]) {
       var d = dayById(dayId);
-      db.drafts[k] = { key: k, dayId: dayId, date: date, startedAt: null, moves: emptyMoves(d, date) };
+      db.drafts[k] = { key: k, dayId: dayId, date: date, startedAt: null, moves: emptyMoves(d, date), rir: 2, pain: 0, note: "" };
     }
-    return db.drafts[k];
+    // 旧版草稿迁移：逐动作 rir/pain/note 收敛到训练级（取最大疼痛、首个备注）
+    var dr = db.drafts[k];
+    if (dr.rir == null || dr.pain == null) {
+      var legacyPain = 0, legacyNote = "";
+      dr.moves.forEach(function (m) {
+        if (m.pain > legacyPain) legacyPain = m.pain;
+        if (!legacyNote && m.note) legacyNote = m.note;
+      });
+      if (dr.rir == null) dr.rir = dr.moves[0] && dr.moves[0].rir != null ? dr.moves[0].rir : 2;
+      if (dr.pain == null) dr.pain = legacyPain;
+      if (dr.note == null || dr.note === "") dr.note = legacyNote;
+    }
+    return dr;
   }
   function findMove(draft, name) {
     for (var i = 0; i < draft.moves.length; i++) if (draft.moves[i].name === name) return draft.moves[i];
@@ -455,14 +467,23 @@
     var d = dayById(s.dayId);
     var html = '<div class="card-title" style="font-size:18px">' + esc(d ? d.name : s.dayId) + "</div>" +
       '<p class="card-sub">' + s.date + " · 时长 " + (s.durationMin || "—") + " 分钟</p>";
+    // 训练级状态行（新版结构；旧记录无此字段则跳过）
+    if (s.rir != null || s.maxPain != null) {
+      html += '<div style="display:flex;gap:8px;margin:10px 0 4px;flex-wrap:wrap">' +
+        '<span class="badge primary">RIR ' + (s.rir != null ? s.rir : "—") + "</span>" +
+        '<span class="badge' + ((s.maxPain || 0) >= 4 ? "" : " cardio") + '">疼痛 ' + (s.maxPain || 0) + "/10</span>" +
+        "</div>";
+    }
+    if (s.note) html += '<p class="move-tip" style="margin-top:6px">' + esc(s.note) + "</p>";
     s.moves.forEach(function (m) {
       html += '<div style="margin-top:14px"><div class="move-name">' + esc(m.name) + "</div>";
       var rows = m.sets.map(function (x, i) {
         return "<tr><td>" + (i + 1) + "</td><td>" + esc(x.weight || "-") + "</td><td>" + esc(x.reps || "-") + "</td><td>" + (x.done ? "✓" : "—") + "</td></tr>";
       }).join("");
       html += '<table class="data"><thead><tr><th>组</th><th>重量 kg</th><th>次数</th><th>完成</th></tr></thead><tbody>' + rows + "</tbody></table>";
+      // 兼容旧版逐动作记录
       if (m.note) html += '<div class="move-tip">备注：' + esc(m.note) + "</div>";
-      html += '<div class="move-tip">RIR ' + m.rir + " · 疼痛 " + m.pain + "/10</div></div>";
+      if (m.rir != null) html += '<div class="move-tip">RIR ' + m.rir + " · 疼痛 " + (m.pain || 0) + "/10</div>";
     });
     sheetBody.innerHTML = html;
     showSheet();
@@ -476,7 +497,10 @@
     if (!d) return;
     var draft = getDraft(dayId, date, resume);
     if (draft.fresh) { delete draft.fresh; db.drafts[draft.key] = draft; }
-    if (!draft.startedAt) { draft.startedAt = Date.now(); saveDB(); }
+    var migrated = !!(getDraft.migration);
+    if (!draft.startedAt) { draft.startedAt = Date.now(); }
+    // 迁移或新建都可能改动草稿，统一落盘
+    saveDB();
     wo = { draft: draft, timerId: null };
     TAB = "log";
     renderWorkout(d);
@@ -496,7 +520,8 @@
     view.innerHTML = "";
     var dr = wo.draft;
 
-    var head = el("div", "card");
+    // ---- 顶部汇总卡：标题 / 圆环 / 计时 / RIR / 疼痛 / 备注，全部收进这一张 ----
+    var head = el("div", "card wo-summary");
     var totalSets = 0, doneSets = 0;
     dr.moves.forEach(function (m) { m.sets.forEach(function (s) { totalSets++; if (s.done) doneSets++; }); });
     head.innerHTML =
@@ -505,19 +530,51 @@
       '<div style="display:flex;align-items:center;gap:10px">' +
       ringSvg(doneSets, totalSets) +
       '<div id="timer" class="timer">--:--</div></div></div>';
+
+    // RIR / 疼痛 / 备注：整次训练填一次，不再每个动作重复
+    head.appendChild(el("label", "field-label", "RIR · 这次整体留了几分余力"));
+    var rir = el("div", "chips");
+    [0, 1, 2, 3, 4].forEach(function (v) {
+      var p = el("button", "pick" + (dr.rir === v ? " on" : "") + (v <= 1 ? " warn" : ""), "RIR " + v);
+      p.onclick = function () {
+        dr.rir = v; saveDB();
+        Array.prototype.forEach.call(rir.children, function (x) { x.classList.remove("on"); });
+        p.classList.add("on");
+      };
+      rir.appendChild(p);
+    });
+    head.appendChild(rir);
+
+    head.appendChild(el("label", "field-label", "疼痛评分（0 = 无痛，10 = 无法忍受）"));
+    var pain = el("div", "chips");
+    // 疼痛选项为偶数刻度；旧记录的奇数值就近吸附显示
+    var painShown = dr.pain % 2 === 1 ? dr.pain + 1 : dr.pain;
+    [0, 2, 4, 6, 8].forEach(function (v) {
+      var p = el("button", "pick" + (painShown === v ? " on" : "") + (v >= 4 ? " danger" : ""), String(v));
+      p.onclick = function () {
+        dr.pain = v; saveDB();
+        Array.prototype.forEach.call(pain.children, function (x) { x.classList.remove("on"); });
+        p.classList.add("on");
+        if (v >= 4) toast("疼痛 ≥4：停止该动作并考虑就医");
+      };
+      pain.appendChild(p);
+    });
+    head.appendChild(pain);
+
+    head.appendChild(el("label", "field-label", "备注（今天的整体感受 / 调整）"));
+    var note = el("input"); note.type = "text";
+    note.placeholder = "例如：睡眠不足，整体降了 5kg";
+    note.style.textAlign = "left";
+    note.value = dr.note || "";
+    note.oninput = function () { dr.note = note.value; saveDB(); };
+    head.appendChild(note);
     view.appendChild(head);
 
-    var bar = el("div");
-    bar.style.cssText = "display:flex;gap:8px;margin-bottom:12px";
-    var cancel = el("button", "btn sm outline full", "保存并退出");
-    cancel.onclick = function () { closeWorkout(true); toast("已保存草稿"); };
-    bar.appendChild(cancel);
-    view.appendChild(bar);
-
+    // ---- 动作卡：只有组数表格，一张卡一行流 ----
     d.moves.forEach(function (m, mi) {
       var st = findMove(dr, m.name);
       if (!st) return;
-      var card = el("div", "card");
+      var card = el("div", "card wo-move");
       var prev = lastEntry(m.name, dr.date);
       var prevTxt = "";
       if (prev) {
@@ -528,8 +585,8 @@
       card.innerHTML =
         '<div class="move" style="border:0;padding:0">' + thumb + '<div class="move-body">' +
         '<div class="move-name">' + esc(m.name) + "</div>" +
-        '<div class="move-meta">目标 ' + m.sets + " 组 × " + (m.lo === m.hi ? m.lo : m.lo + "-" + m.hi) + (m.cardio ? " 分钟" : " 次") + "</div>" +
-        (prevTxt ? '<div class="move-tip">' + esc(prevTxt) + "</div>" : "") +
+        '<div class="move-meta">目标 ' + m.sets + " 组 × " + (m.lo === m.hi ? m.lo : m.lo + "-" + m.hi) + (m.cardio ? " 分钟" : " 次") +
+        (prevTxt ? ' · <span class="prev">' + esc(prevTxt) + "</span>" : "") +
         "</div></div>";
 
       var setHead = el("div", "setrow");
@@ -542,7 +599,6 @@
         var w = el("input"); w.type = "number"; w.inputMode = "decimal"; w.step = "0.5"; w.placeholder = "kg"; w.value = s.weight;
         var reps = el("input"); reps.type = "number"; reps.inputMode = "numeric"; reps.placeholder = m.lo + "-" + m.hi; reps.value = s.reps;
         var cell = el("div", "done-cell");
-        // 对勾由 CSS ::before 绘制，这里不再放文本，避免两份重叠溢出
         var ck = el("button", "check" + (s.done ? " on" : ""));
         ck.type = "button";
         ck.setAttribute("aria-label", (s.done ? "取消完成 第" : "标记完成 第") + (si + 1) + " 组");
@@ -562,7 +618,7 @@
         card.appendChild(r);
       });
 
-      // 按上次一键填入
+      // 按上次一键填入（有历史时才显示）
       if (prev) {
         var fill = el("button", "btn sm outline", "按上次重量填入");
         fill.style.marginTop = "10px";
@@ -576,43 +632,6 @@
         };
         card.appendChild(fill);
       }
-
-      // RIR
-      card.appendChild(el("label", "field-label", "RIR（结束该动作时还剩几次余力）"));
-      var rir = el("div", "chips");
-      [0, 1, 2, 3, 4].forEach(function (v) {
-        var p = el("button", "pick" + (st.rir === v ? " on" : "") + (v <= 1 ? " warn" : ""), "RIR " + v);
-        p.onclick = function () {
-          st.rir = v; saveDB();
-          Array.prototype.forEach.call(rir.children, function (x) { x.classList.remove("on"); });
-          p.classList.add("on");
-        };
-        rir.appendChild(p);
-      });
-      card.appendChild(rir);
-
-      // 疼痛
-      card.appendChild(el("label", "field-label", "疼痛评分（0 = 无痛，10 = 无法忍受）"));
-      var pain = el("div", "chips");
-      [0, 2, 4, 6, 8].forEach(function (v) {
-        var p = el("button", "pick" + (st.pain === v ? " on" : "") + (v >= 4 ? " danger" : ""), String(v));
-        p.onclick = function () {
-          st.pain = v; saveDB();
-          Array.prototype.forEach.call(pain.children, function (x) { x.classList.remove("on"); });
-          p.classList.add("on");
-          if (v >= 4) toast("疼痛 ≥4：停止该动作并考虑就医");
-        };
-        pain.appendChild(p);
-      });
-      card.appendChild(pain);
-
-      // 备注
-      card.appendChild(el("label", "field-label", "备注（动作感受 / 调整）"));
-      var note = el("input"); note.type = "text"; note.placeholder = "例如：左肩有轻微夹痛，改用蝴蝶机";
-      note.style.textAlign = "left";
-      note.value = st.note || "";
-      note.oninput = function () { st.note = note.value; saveDB(); };
-      card.appendChild(note);
 
       view.appendChild(card);
     });
@@ -656,9 +675,9 @@
     fin.addEventListener("click", function () { finishWorkout(d); });
     view.appendChild(fin);
 
-    var back = el("button", "btn full outline", "回到记录列表");
+    var back = el("button", "btn full outline", "保存并退出");
     back.style.marginTop = "10px";
-    back.onclick = function () { closeWorkout(true); };
+    back.onclick = function () { closeWorkout(true); toast("已保存草稿"); };
     view.appendChild(back);
   }
 
@@ -676,18 +695,22 @@
     if (!c.done) { toast("还没有勾选任何一组"); return; }
     if (!confirm("完成这次训练？已完成 " + c.done + "/" + c.total + " 组")) return;
     var duration = Math.round((Date.now() - dr.startedAt) / 60000);
+    // 兼容旧版草稿：逐动作疼痛值取最大并入训练级
     var maxPain = 0;
+    dr.moves.forEach(function (m) { if (m.pain > maxPain) maxPain = m.pain; });
     var moves = dr.moves.map(function (m) {
-      if (m.pain > maxPain) maxPain = m.pain;
       return {
         name: m.name,
-        rir: m.rir, pain: m.pain, note: m.note || "",
         sets: m.sets.map(function (s) { return { weight: s.weight, reps: s.reps, done: !!s.done }; }),
       };
     });
     db.sessions.push({
       id: uid(), dayId: d.id, date: dr.date, startedAt: dr.startedAt,
-      durationMin: Math.max(duration, 1), moves: moves, maxPain: maxPain,
+      durationMin: Math.max(duration, 1), moves: moves,
+      // 训练级 RIR / 疼痛 / 备注（新版结构）；旧草稿的逐动作值兜底取最大
+      rir: dr.rir != null ? dr.rir : 2,
+      maxPain: Math.max(dr.pain || 0, maxPain),
+      note: dr.note || "",
     });
     delete db.drafts[dr.key];
     saveDB();
