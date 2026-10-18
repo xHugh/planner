@@ -55,6 +55,7 @@
   --danger: #ef4444;
 
   /* 玻璃层：随主题切换，不硬编码 */
+  --hero-bg: linear-gradient(135deg, #1e3a8a 0%, var(--brand-1) 45%, var(--brand-2) 130%);
   --glass: rgba(255, 255, 255, .82);
   --glass-bar: rgba(255, 255, 255, .78);
   --glass-border: rgba(255, 255, 255, .7);
@@ -95,20 +96,21 @@
    （JS 在首屏前把 auto 解析成 light/dark 并写入，避免重复一套令牌）
    ============================================================ */
 :root[data-theme="dark"] {
-  --bg: #080d16;
-  --card: #111827;
-  --card-2: #161f2e;
-  --card-top: #1a2434;
-  --fill: #1c2635;
-  --ink: #f1f5f9;
-  --ink-2: #dbe3ee;
-  --muted: #9fb0c6;
-  --faint: #8595ab;
-  --line: #263243;
+  /* 纯黑：所有中性色 R=G=B，不带蓝调 */
+  --bg: #000000;
+  --card: #0a0a0a;
+  --card-2: #121212;
+  --card-top: #141414;
+  --fill: #1a1a1a;
+  --ink: #fafafa;
+  --ink-2: #e5e5e5;
+  --muted: #a3a3a3;
+  --faint: #8f8f8f;
+  --line: #262626;
 
   --brand-1: #3b82f6;
   --brand-2: #22d3ee;
-  --brand-deep: #020617;
+  --brand-deep: #000000;
 
   --d-w1: #fb7185;
   --d-w2: #60a5fa;
@@ -120,20 +122,23 @@
   --warn: #fbbf24;
   --danger: #f87171;
 
-  --sh-1: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 18px rgba(0, 0, 0, .34);
-  --sh-2: 0 2px 8px rgba(0, 0, 0, .4), 0 14px 36px rgba(0, 0, 0, .46);
-  --sh-brand: 0 8px 26px rgba(59, 130, 246, .34);
+  /* 纯黑上阴影几乎不可见，层次主要靠描边 */
+  --sh-1: 0 1px 2px rgba(0, 0, 0, .6);
+  --sh-2: 0 6px 24px rgba(0, 0, 0, .7);
+  --sh-brand: 0 8px 26px rgba(59, 130, 246, .3);
 
-  /* 深色下的玻璃层 */
-  --glass: rgba(22, 31, 46, .88);
-  --glass-bar: rgba(17, 24, 39, .82);
-  --glass-border: rgba(255, 255, 255, .09);
+  --glass: rgba(20, 20, 20, .86);
+  --glass-bar: rgba(8, 8, 8, .8);
+  --glass-border: rgba(255, 255, 255, .1);
+
+  /* 深色下的 hero：近黑打底，右上留一抹品牌色，不至于死板 */
+  --hero-bg: linear-gradient(135deg, #0a0a0a 0%, #101318 46%, #0d2027 100%);
 }
 
 :root[data-theme="dark"] body::before {
   background:
-    radial-gradient(620px 320px at 8% -6%, rgba(59, 130, 246, .2), transparent 62%),
-    radial-gradient(520px 300px at 102% 4%, rgba(34, 211, 238, .14), transparent 60%),
+    radial-gradient(620px 320px at 8% -6%, rgba(59, 130, 246, .1), transparent 62%),
+    radial-gradient(520px 300px at 102% 4%, rgba(34, 211, 238, .07), transparent 60%),
     var(--bg);
 }
 
@@ -335,7 +340,7 @@ main { padding: 14px 16px 24px; }
 .hero {
   position: relative;
   overflow: hidden;
-  background: linear-gradient(135deg, #1e3a8a 0%, var(--brand-1) 45%, var(--brand-2) 130%);
+  background: var(--hero-bg);
   color: #fff;
   border-radius: var(--r-xl);
   padding: 22px;
