@@ -11,6 +11,7 @@
   var sheetBody = document.getElementById("sheetBody");
   var toastEl = document.getElementById("toast");
   var subEl = document.getElementById("appbarSub");
+  var bar = document.querySelector(".appbar");
 
   /* ---------------- 存储 ---------------- */
   function loadDB() {
@@ -148,8 +149,8 @@
 
   /* ---------------- 计划页 ---------------- */
   function renderPlan() {
-    subEl.textContent = "4 分化 · 固定器械 · 减伤版";
     view.innerHTML = "";
+    subEl.textContent = "4 分化 · 固定器械 · 减伤版";
 
     var now = new Date();
     var todayId = plannedDayId(now);
@@ -174,10 +175,16 @@
     // 周安排
     var week = el("div", "week");
     PLAN.week.forEach(function (id, i) {
-      var c = el("div", "daychip" + (i === weekIndex(now) ? " today" : "") + (id ? "" : " rest"));
+      var isToday = i === weekIndex(now);
+      var c = el("button", "daychip" + (isToday ? " today" : "") + (id ? "" : " rest"));
+      c.type = "button";
       if (id) c.setAttribute("data-day", id);
+      c.setAttribute("aria-label", PLAN.weekdays[i] + " " + (id ? dayById(id).name : "休息"));
       c.innerHTML = "<b>" + (id ? esc(dayById(id).short) : "休") + "</b><span>" + PLAN.weekdays[i].slice(1) + "</span>";
-      c.onclick = function () { if (id) showPlanSheet(id); };
+      c.onclick = function () {
+        if (id) showPlanSheet(id);
+        else showRestSheet(i);
+      };
       week.appendChild(c);
     });
     view.appendChild(week);
@@ -195,9 +202,8 @@
         '<p class="card-sub">' + esc(d.focus) + " · " + d.moves.length + " 个动作 · " + setsTotal + " 组</p>";
       var btn = el("button", "btn sm outline", "查看动作 →");
       btn.style.marginTop = "12px";
-      btn.onclick = function (e) { e.stopPropagation(); showPlanSheet(d.id); };
+      btn.onclick = function () { showPlanSheet(d.id); };
       c.appendChild(btn);
-      c.onclick = function () { showPlanSheet(d.id); };
       view.appendChild(c);
     });
 
@@ -206,6 +212,53 @@
     rc.innerHTML = '<div class="card-title">🛡 减伤规则</div><ol style="margin:12px 0 0 18px;padding:0;font-size:13px;line-height:1.85;color:var(--muted)">' +
       PLAN.rules.map(function (r) { return "<li>" + esc(r) + "</li>"; }).join("") + "</ol>";
     view.appendChild(rc);
+  }
+
+  function showRestSheet(dayIdx) {
+    var todayIdx = weekIndex(new Date());
+    var isToday = dayIdx === todayIdx;
+    var nextIdx = -1;
+    for (var k = 1; k <= 7; k++) {
+      var j = (dayIdx + k) % 7;
+      if (PLAN.week[j]) { nextIdx = j; break; }
+    }
+    var nextDay = nextIdx >= 0 ? dayById(PLAN.week[nextIdx]) : null;
+
+    var html =
+      '<div class="card-title" style="font-size:19px">' + esc(PLAN.weekdays[dayIdx]) + " · 休息日" + "</div>" +
+      '<p class="card-sub">肌肉在休息时生长。完全停练不会掉肌肉，但会掉训练状态。</p>';
+
+    html += '<div class="section-h" style="margin-top:20px">建议安排</div>';
+    html +=
+      '<div class="move"><div class="move-thumb placeholder" style="background:var(--fill)">20′</div>' +
+      '<div class="move-body"><div class="move-name">低强度有氧</div>' +
+      '<div class="move-meta">椭圆机 / 台阶机 / 快走，20-30 分钟</div>' +
+      '<div class="move-tip">强度控制在能正常说话的范围内，目的是促进血液循环、帮助恢复，<b>不要</b>做成力竭有氧。</div></div></div>';
+
+    html +=
+      '<div class="move"><div class="move-thumb placeholder" style="background:var(--fill)">10′</div>' +
+      '<div class="move-body"><div class="move-name">拉伸与放松</div>' +
+      '<div class="move-meta">胸、背、髋、腘绳肌各 30 秒</div>' +
+      '<div class="move-tip">训练后 24 小时内做静态拉伸，重点放在当天练过的肌群。</div></div></div>';
+
+    html +=
+      '<div class="move"><div class="move-thumb placeholder" style="background:var(--fill)">≥7h</div>' +
+      '<div class="move-body"><div class="move-name">睡够 7-9 小时</div>' +
+      '<div class="move-meta">蛋白质约 1.6-2.2 g/kg 体重</div>' +
+      '<div class="move-tip">恢复本身也是训练的一部分，尤其是每周练 5-6 天时。</div></div></div>';
+
+    if (nextDay) {
+      html +=
+        '<div class="card" style="margin:18px 0 0;background:var(--fill);box-shadow:none">' +
+        '<div class="card-sub">下一个训练日</div>' +
+        '<div class="card-title" style="margin:4px 0 0">' + esc(PLAN.weekdays[nextIdx]) + " · " + esc(nextDay.name) + "</div>" +
+        '<p class="card-sub" style="margin-top:4px">' + esc(nextDay.focus) + "</p></div>";
+    }
+
+    html += '<p class="move-tip" style="margin-top:16px;text-align:center">休息日也可以开「记录」页补记，避免漏掉历史。</p>';
+
+    sheetBody.innerHTML = html;
+    showSheet();
   }
 
   function showPlanSheet(dayId) {
@@ -253,8 +306,8 @@
 
   /* ---------------- 记录页 ---------------- */
   function renderLog() {
-    subEl.textContent = "选择日期与训练日";
     view.innerHTML = "";
+    subEl.textContent = "选择日期与训练日";
     var date = today();
     var guess = plannedDayId(new Date());
     if (!guess) guess = "w1";
@@ -330,20 +383,26 @@
           if (x.done) { sets++; vol += (+x.weight || 0) * (+x.reps || 0); }
         });
       });
-      var row = el("div", "row");
+      // 整行可点开详情：按钮而非 div，才能被键盘和读屏访问
+      var row = el("button", "row row-tap");
+      row.type = "button";
       row.style.borderLeft = "3px solid var(--d-" + s.dayId + ")";
       row.style.paddingLeft = "12px";
       row.innerHTML = '<div class="row-main"><div class="row-title">' + esc(d ? d.name : s.dayId) + " · " + fmtDate(s.date) + "</div>" +
         '<div class="row-sub">' + sets + " 组 · 容量 " + Math.round(vol) + " kg · 时长 " + (s.durationMin || "—") + " 分" +
         (s.maxPain >= 4 ? ' · <span style="color:var(--danger);font-weight:700">疼痛 ' + s.maxPain + "/10</span>" : "") + "</div></div>";
-      var del = el("button", "btn sm danger", "删除");
-      del.onclick = function (e) {
+      var del = el("span", "btn sm danger", "删除");
+      del.setAttribute("role", "button");
+      del.tabIndex = 0;
+      var doDel = function (e) {
         e.stopPropagation();
         if (confirm("删除这条训练记录？")) {
           db.sessions = db.sessions.filter(function (x) { return x.id !== s.id; });
           saveDB(); renderLog(); toast("已删除");
         }
       };
+      del.onclick = doDel;
+      del.onkeydown = function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); doDel(e); } };
       row.onclick = function () { showSessionSheet(s.id); };
       row.appendChild(del);
       list.appendChild(row);
@@ -600,8 +659,8 @@
 
   /* ---------------- 进度页 ---------------- */
   function renderProgress() {
-    subEl.textContent = "训练量 · 最佳组 · 疼痛趋势";
     view.innerHTML = "";
+    subEl.textContent = "训练量 · 最佳组 · 疼痛趋势";
     if (!db.sessions.length) {
       view.appendChild(el("div", "empty", "还没有数据。<br>完成一次训练后，这里会出现进度图表。"));
       return;
@@ -798,11 +857,12 @@
 
   /* ---------------- 器械图鉴 ---------------- */
   function renderGallery() {
-    subEl.textContent = "固定器械实拍图（Wikimedia Commons）";
     view.innerHTML = "";
+    subEl.textContent = "固定器械实拍图（Wikimedia Commons）";
     var grid = el("div", "grid");
     GAL.forEach(function (g) {
-      var c = el("div", "gcard");
+      var c = el("button", "gcard");
+      c.type = "button";
       c.innerHTML = '<img src="img/' + g.key + '.jpg" alt="' + esc(g.name) + '" loading="lazy">' +
         '<div class="gbody"><div class="gname">' + esc(g.name) + '<span class="badge">' + esc(g.day) + "</span></div>" +
         '<div class="gtip">' + esc(g.tip) + "</div></div>";
@@ -829,12 +889,35 @@
   }
 
   /* ---------------- 底部弹层 ---------------- */
+  var lastFocus = null;
   function showSheet() {
+    lastFocus = document.activeElement;
     sheet.classList.remove("hidden");
     sheet.scrollTop = 0;
+    // 焦点移入弹层，键盘用户可直接操作；关闭时归还原处
+    setTimeout(function () {
+      var f = sheet.querySelector("button, a, [tabindex]:not([tabindex='-1'])");
+      if (f) f.focus();
+    }, 60);
   }
-  function closeSheet() { sheet.classList.add("hidden"); }
+  function closeSheet() {
+    sheet.classList.add("hidden");
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+    lastFocus = null;
+  }
   sheet.addEventListener("click", function (e) { if (e.target === sheet) closeSheet(); });
+
+  // Esc 关闭弹层；Tab 焦点锁定在弹层内
+  document.addEventListener("keydown", function (e) {
+    if (sheet.classList.contains("hidden")) return;
+    if (e.key === "Escape") { closeSheet(); return; }
+    if (e.key !== "Tab") return;
+    var f = sheet.querySelectorAll("button, a[href], input, select, [tabindex]:not([tabindex='-1'])");
+    if (!f.length) return;
+    var first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
 
   // 记录页里勾选后刷新头部计数
   document.addEventListener("click", function (e) {
@@ -842,6 +925,15 @@
       setTimeout(wo.counter, 0);
     }
   });
+
+  // 顶栏滚动后加描边与阴影
+  var lastScroll = -1;
+  window.addEventListener("scroll", function () {
+    var y = window.pageYOffset || document.documentElement.scrollTop;
+    if (Math.abs(y - lastScroll) < 6) return;
+    lastScroll = y;
+    bar.classList.toggle("scrolled", y > 6);
+  }, { passive: true });
 
   render();
 })();
