@@ -24,6 +24,7 @@ node tests/run.js --url=http://127.0.0.1:8765   # 对已启动的服务跑
 - 需要本机已有 `playwright` + chromium（仅开发用，App 本身零依赖），与 `scripts/render-icons.js` 同一约定。脚本会依次尝试 `playwright` / `playwright-core`，并在本仓库、`/tmp/pwtest`、`npm root -g` 等位置查找；找不到会给出安装提示并退出。
 - 用例分组：`flow`（训练完整流程）、`draft`（草稿不被覆盖、放弃、空草稿清理）、`data`（旧数据兼容、导入校验、残缺记录容错）、`workout`（底栏进度、后台不计时长、记录再编辑）、`a11y`（触摸 ≥44px、对比度 ≥4.5:1 深浅主题 × 计划页/进度页、`aria-current`/`aria-live`）、`chart`（一年数据下图表可读）、`offline`（预缓存清单完整性、断网加载）。每条用例还会检查 JS 报错与 4xx/5xx。
 - 退出码非 0 表示有失败，失败明细会打印在末尾。
+- 用例**不假设「今天是周一」**：今日训练、「开始今天」按钮存不存在，都由 `tests/run.js` 里的 `todayPlan()` 从 `PLAN.week` 现算；`GYM4_TZ=Pacific/Kiritimati node tests/run.js` 可以在别的星期几跑同一套用例。改 `PLAN.week` 时注意用例是按 `data-day` 选训练日的。
 - CI：`.github/workflows/test.yml` 在每次 push 到 `main` 和 PR 上跑同一套用例；workflow 内用 `npm i --no-save` 装 playwright，仓库不产生 `package.json`。失败时会把测试输出推到 `ci-debug` 分支（`https://raw.githubusercontent.com/xHugh/planner/ci-debug/test-output.txt`），用 curl 就能看日志——Actions 的日志页需要登录才能读。
 
 ## 结构

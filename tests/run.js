@@ -49,6 +49,8 @@ function loadPlaywright() {
 
 const { chromium } = loadPlaywright();
 const ROOT = path.join(__dirname, "..");
+// 测试用的时区：换 GYM4_TZ 可以在别的星期几跑同一套用例
+const TZ = process.env.GYM4_TZ || "Asia/Shanghai";
 const PORT = 8781 + (process.pid % 300);
 
 const MIME = {
@@ -122,6 +124,43 @@ const SEED_BIG = `
   localStorage.setItem("gym4.db.v1", JSON.stringify({sessions, drafts:{}}));
 `;
 
+// ---------- 与星期几无关的辅助 ----------
+// 用例不该假设「今天是周一」：计划页的今日训练、首页有没有「开始今天」，
+// 都随星期几变化，所以从 PLAN.week 现算。
+async function todayPlan(page) {
+  return page.evaluate(async () => {
+    const { PLAN } = await import("./data.js");
+    const d = new Date();
+    const id = PLAN.week[(d.getDay() + 6) % 7];
+    const day = PLAN.days.find(x => x.id === id);
+    return {
+      id: id || "w1",
+      name: day ? day.name : "休息日",
+      isRest: !id,
+      move: day ? day.moves[0].name : "",
+    };
+  });
+}
+
+// 用周安排里的计划弹层打开指定训练日（不受今天星期几影响）
+async function openDay(page, dayId) {
+  await page.locator(`.daychip[data-day="${dayId}"]`).click();
+  await page.waitForTimeout(350);
+  await page.click("#sheetFooter button.btn");
+  await page.waitForTimeout(600);
+}
+
+// 打开「今天」的训练：优先点首页的「开始今天」；今天休息时没有这个按钮，改走计划弹层
+async function openToday(page, dayId) {
+  const hero = page.locator(".hero .btn.primary");
+  if (await hero.count() > 0) {
+    await hero.click();
+    await page.waitForTimeout(600);
+  } else {
+    await openDay(page, dayId);
+  }
+}
+
 // ---------- 页面内跑的对比度扫描 ----------
 // 半透明背景要逐层合成，否则算出来的对比度是假的
 function contrastScan(selector) {
@@ -168,12 +207,13 @@ const SUITES = [
       await page.reload({ waitUntil: "networkidle" });
       await page.waitForTimeout(400);
 
-      t.eq(await page.locator(".hero h2").innerText(), "W1 胸+三头", "计划页渲染今日训练");
+      const plan = await todayPlan(page);
+      t.eq(await page.locator(".hero h2").innerText(), plan.name, "计划页渲染今日训练");
       t.eq(await page.locator(".daychip").count(), 7, "一周安排 7 格");
       t.eq(await page.locator(".week .daychip.rest").count(), 2, "两个休息日");
 
       // 休息日可点开
-      await page.locator(".daychip").nth(2).click();
+      await page.locator(".week .daychip.rest").first().click();
       await page.waitForTimeout(350);
       t.ok((await page.locator("#sheetBody").innerText()).includes("休息日"), "休息日弹层可打开");
       await page.keyboard.press("Escape");
@@ -181,7 +221,7 @@ const SUITES = [
       t.ok(!(await page.locator(".sheet-mask").isVisible()), "Esc 关闭弹层");
 
       // 计划弹层 → 开始训练
-      await page.locator(".daychip").nth(0).click();
+      await page.locator('.daychip[data-day="w1"]').click();
       await page.waitForTimeout(350);
       t.eq(await page.locator(".sheet-head-title").innerText(), "W1 胸+三头", "计划弹层标题");
       t.ok(await page.locator("#sheetFooter button.btn").isVisible(), "计划弹层底部有主操作");
@@ -235,21 +275,22 @@ const SUITES = [
         const d = new Date(), z = n => String(n).padStart(2, "0");
         return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate());
       });
-      // 造一份「已勾选 1 组 + 有备注」的当天草稿
-      await page.evaluate((d) => {
+      const plan = await todayPlan(page);
+      // 造一份「已勾选 1 组 + 有备注」的当天草稿（用今天该练的那个训练日）
+      await page.evaluate(({ d, id, move }) => {
         localStorage.setItem("gym4.db.v1", JSON.stringify({ sessions: [], drafts: {
-          ["w1@" + d]: {
-            key: "w1@" + d, dayId: "w1", date: d, startedAt: Date.now() - 6e5, touched: true,
-            moves: [{ index: 0, name: "坐姿推胸机", sets: [{ weight: "80", reps: "9", done: true }] }],
+          [id + "@" + d]: {
+            key: id + "@" + d, dayId: id, date: d, startedAt: Date.now() - 6e5, touched: true,
+            moves: [{ index: 0, name: move, sets: [{ weight: "80", reps: "9", done: true }] }],
             rir: 2, pain: 0, note: "我的草稿备注",
           },
         }}));
-      }, today);
+      }, { d: today, id: plan.id, move: plan.move });
       await page.reload({ waitUntil: "networkidle" });
       await page.waitForTimeout(500);
 
-      // 从计划页点「开始今天」——以前这里会把草稿冲掉
-      await page.click(".hero .btn.primary");
+      // 开始今天的训练——以前这里会把草稿冲掉
+      await openToday(page, plan.id);
       await page.waitForTimeout(700);
       const dr = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem("gym4.db.v1")).drafts)[0]);
       t.ok(dr, "草稿还在");
@@ -271,8 +312,7 @@ const SUITES = [
       // 开了训练什么都没动就退出 → 不留僵尸草稿
       await page.click('.nav-btn[data-tab="plan"]');
       await page.waitForTimeout(400);
-      await page.click(".hero .btn.primary");
-      await page.waitForTimeout(600);
+      await openToday(page, plan.id);
       await page.click("#woExitBtn");
       await page.waitForTimeout(600);
       await page.click('.nav-btn[data-tab="log"]');
@@ -332,8 +372,8 @@ const SUITES = [
       await page.reload({ waitUntil: "networkidle" });
       await page.waitForTimeout(400);
 
-      await page.click(".hero .btn.primary");
-      await page.waitForTimeout(600);
+      // 固定打开 W1（组数固定 21），不受今天星期几影响
+      await openDay(page, "w1");
 
       // 底栏常驻进度
       t.eq(await page.locator("#woDockCount").innerText(), "已完成 0/21 组", "底栏初始显示完成数");
@@ -481,8 +521,7 @@ const SUITES = [
       await page.reload({ waitUntil: "networkidle" });
       await page.waitForTimeout(400);
       t.eq(await page.getAttribute("#toast", "role"), "status", "toast 有 role=status");
-      await page.click(".hero .btn.primary");
-      await page.waitForTimeout(600);
+      await openDay(page, "w1");
       t.eq(await page.getAttribute("#woSub", "aria-live"), "polite", "训练进度有 aria-live");
       t.ok((await page.getAttribute(".ring", "aria-label") || "").includes("组"), "进度环有可读标签");
       await page.locator("#view .check").nth(0).click();
@@ -584,10 +623,11 @@ const SUITES = [
       const missing = runtime.filter(f => !assets.some(a => a === "." + f || a === "." + f.replace(/\/$/, "/")));
       t.eq(missing.length, 0, `预缓存清单覆盖全部运行时文件${missing.length ? "，漏了 " + missing.join(", ") : ""}`);
 
+      const plan = await todayPlan(page);
       await page.context().setOffline(true);
       await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
       await page.waitForTimeout(900);
-      t.eq(await page.locator(".hero h2").innerText().catch(() => "FAIL"), "W1 胸+三头", "断网后仍能打开");
+      t.eq(await page.locator(".hero h2").innerText().catch(() => "FAIL"), plan.name, "断网后仍能打开");
       t.eq(await page.locator(".daychip").count(), 7, "断网后周安排正常");
       await page.context().setOffline(false);
     },
@@ -617,7 +657,7 @@ const SUITES = [
       viewport: { width: 390, height: 844 },
       deviceScaleFactor: 2,
       locale: "zh-CN",
-      timezoneId: "Asia/Shanghai",
+      timezoneId: TZ,
     });
     const page = await ctx.newPage();
     const jsErrors = [], badResponses = [];
