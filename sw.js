@@ -1,5 +1,5 @@
 /* 铁馆计划 service worker：离线缓存 */
-var CACHE = "gym4-v13";
+var CACHE = "gym4-v14";
 var ASSETS = [
   "./",
   "./index.html",

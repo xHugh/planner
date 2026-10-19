@@ -1090,3 +1090,16 @@ main > *:nth-child(n+6) { animation-delay: .22s; }
 
 .mb-6  { margin-bottom: 6px; }
 .mb-12 { margin-bottom: 12px; }
+
+/* ---------- 草稿行的「继续」标识 ----------
+   与历史行（› 查看详情）区分：草稿行是继续未完成的训练 */
+.row-resume {
+  flex: 0 0 auto;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: var(--brand-1);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .3px;
+}

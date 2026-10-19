@@ -126,7 +126,7 @@ export function renderLog(view, subEl) {
           <div class="row-title">${esc(d.name)} · ${fmtDate(dr.date)}</div>
           <div class="row-sub">已完成 ${done}/${total} 组</div>
         </div>
-        <span class="row-arrow" aria-hidden="true">›</span>`;
+        <span class="row-resume">继续</span>`;
       row.setAttribute("aria-label", `继续 ${d.name} ${dr.date} 的训练`);
       row.onclick = () => openWorkout(dr.dayId, dr.date, true);
       view.appendChild(row);
@@ -383,6 +383,12 @@ export function renderWorkout(d) {
   woFinishBtn.onclick = () => finishWorkout(d);
   woExitBtn.onclick = () => { closeWorkout(true); toast("已保存草稿"); };
 }
+
+// 文档级委托：勾选或点击完成训练时刷新头部进度条与圆环
+document.addEventListener("click", e => {
+  if (!state.wo) return;
+  if (e.target.closest && e.target.closest(".check") && state.wo.counter) state.wo.counter();
+});
 
 export function finishWorkout(d) {
   const { wo } = state;
