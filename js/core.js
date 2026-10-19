@@ -182,9 +182,13 @@ export function saveDB() {
 }
 
 // 可用记录：旧版本遗留或手改 localStorage 的残缺记录可能缺字段，
-// 消费前统一过滤，避免各页面各自判空时漏掉一处
+// 消费前统一过滤，避免各页面各自判空时漏掉一处。
+// 每个动作的 sets 也必须是数组——消费端直接 m.sets.forEach，
+// 只查 moves 是数组挡不住「moves 在、某个动作缺 sets」这种。
 export function validSessions() {
-  return db.sessions.filter(s => s && typeof s.date === "string" && Array.isArray(s.moves));
+  return db.sessions.filter(s =>
+    s && typeof s.date === "string" && Array.isArray(s.moves)
+    && s.moves.every(m => m && Array.isArray(m.sets)));
 }
 
 /* ---------------- 持久化存储 ----------------

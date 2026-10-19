@@ -453,6 +453,9 @@ const SUITES = [
         localStorage.setItem("gym4.db.v1", JSON.stringify({
           sessions: [
             { id: "bad", dayId: "w1", date: "2026-10-16", durationMin: 52, maxPain: 0, rir: 2, note: "" },
+            // moves 在、但某个动作缺 sets：消费端会直接 m.sets.forEach，过滤必须挡掉
+            { id: "badSets", dayId: "w1", date: "2026-10-15", durationMin: 40, maxPain: 0, rir: 2, note: "",
+              moves: [{ name: "上斜推胸机" }] },
             { id: "ok", dayId: "w1", date: "2026-10-17", durationMin: 52, maxPain: 0, rir: 2, note: "",
               moves: [{ name: "坐姿推胸机", sets: [{ weight: "80", reps: "9", done: true }] }] },
           ], drafts: {},
@@ -464,6 +467,7 @@ const SUITES = [
       await page.waitForTimeout(600);
       t.ok(await page.locator(".stat").count() >= 3, "残缺记录不影响统计渲染");
       t.ok((await page.locator("#view").innerText()).includes("格式异常"), "残缺记录有提示");
+      t.ok((await page.locator("#view").innerText()).includes("有 2 条记录格式异常已跳过"), "缺 sets 的动作也算残缺");
 
       // 同一条残缺记录在记录页也不能把页面打崩：历史列表、开始新训练、详情弹窗
       await page.click('.nav-btn[data-tab="log"]');
@@ -480,10 +484,15 @@ const SUITES = [
 
       const sheet = await page.evaluate(async () => {
         const m = await import("./js/log.js");
-        try { m.showSessionSheet("bad"); return "no throw"; }
-        catch (e) { return e.constructor.name + ": " + e.message; }
+        const out = [];
+        for (const id of ["bad", "badSets"]) {
+          try { m.showSessionSheet(id); out.push("no throw"); }
+          catch (e) { out.push(e.constructor.name + ": " + e.message); }
+        }
+        return out;
       });
-      t.eq(sheet, "no throw", "残缺记录的详情弹窗不抛错");
+      t.eq(sheet[0], "no throw", "残缺记录的详情弹窗不抛错");
+      t.eq(sheet[1], "no throw", "缺 sets 的记录详情弹窗不抛错");
     },
   },
 
