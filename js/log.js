@@ -132,6 +132,8 @@ export function renderLog(view, subEl) {
   const inpDate = el("input");
   inpDate.type = "date";
   inpDate.value = today();
+  // 只能选今天或更早：草稿身份是 训练日id@日期，未来日期没有意义（spec: workout-draft）
+  inpDate.max = today();
   dateBox.appendChild(inpDate);
 
   const dayBox = el("div");
@@ -150,6 +152,8 @@ export function renderLog(view, subEl) {
   go.style.marginTop = "16px";
   go.onclick = () => {
     if (!inpDate.value) { toast("请选择日期"); return; }
+    // max 挡不住程序化赋值与个别浏览器的手输，提交前再校验一次
+    if (inpDate.value > today()) { toast("训练日期不能晚于今天"); return; }
     openWorkout(guess, inpDate.value);
   };
   c.appendChild(go);
@@ -234,15 +238,20 @@ export function renderLog(view, subEl) {
       </div>
       <span class="row-arrow" aria-hidden="true">›</span>`;
     row.setAttribute("aria-label", `查看 ${d ? d.name : s.dayId} ${s.date} 的训练详情`);
-    row.onclick = () => showSessionSheet(s.id);
+    row.onclick = () => showSessionSheet(s);
     listBox.appendChild(row);
   });
   view.appendChild(listBox);
 }
 
-export function showSessionSheet(id) {
-  // 只认可用记录：残缺记录（缺 date 或 moves）在列表里也不会出现
-  const s = validSessions().find(x => x.id === id);
+export function showSessionSheet(target) {
+  // 只认可用记录：残缺记录（缺 date 或 moves）在列表里也不会出现。
+  // 定位以记录对象本身为准——手改数据可能有重复 id，按 id 只能猜到第一条；
+  // 字符串入参仅作兼容（按 id 找第一条），列表入口一律传记录对象。
+  const valid = validSessions();
+  const s = typeof target === "string"
+    ? valid.find(x => x.id === target)
+    : (target && valid.includes(target) ? target : null);
   if (!s) return;
   const d = dayById(s.dayId);
 
@@ -289,9 +298,11 @@ export function showSessionSheet(id) {
   const delBtn = el("button", "btn danger full", "删除这条记录");
   delBtn.onclick = () => {
     if (!confirm(`删除 ${fmtDate(s.date)} 的这条训练记录？此操作不可撤销。`)) return;
-    const before = db.sessions;
-    db.sessions = db.sessions.filter(x => x.id !== s.id);
-    if (!saveDB()) { db.sessions = before; return; }
+    // 按被选中的对象定位：重复 id（手改数据）时按 id 过滤会把同 id 的记录一起删掉
+    const idx = db.sessions.indexOf(s);
+    if (idx < 0) { closeSheet(); toast("这条记录已经不在了"); return; }
+    db.sessions.splice(idx, 1);
+    if (!saveDB()) { db.sessions.splice(idx, 0, s); return; }
     closeSheet();
     goLog();
     toast("已删除");
@@ -303,6 +314,17 @@ export function showSessionSheet(id) {
 
 /* ---------------- 训练进行中 ---------------- */
 export const state = { wo: null };
+
+// 编辑历史记录且改过内容时，刷新/关闭/跳走要弹浏览器原生离开确认（「更改可能不会保存」）。
+// 未进入编辑、或进入编辑后没改过任何字段就不打扰。
+// 已知限制：iOS Safari 与 PWA 独立窗口对该提示支持有限（方案选择时已确认接受）。
+window.addEventListener("beforeunload", e => {
+  const wo = state.wo;
+  if (wo && wo.editingId && wo.editDirty) {
+    e.preventDefault();
+    e.returnValue = "";
+  }
+});
 
 const workoutDock = document.getElementById("workoutDock");
 const woExitBtn = document.getElementById("woExitBtn");
@@ -448,7 +470,9 @@ export function openWorkout(dayId, date, opts) {
   }
   resumeClock(draft);
   if (!editingId) saveDB();
-  state.wo = { draft, timerId: null, editingId };
+  // editingRef：编辑锚定打开时的那条记录对象本身（重复 id 手改数据时不误伤别的记录）
+  // editDirty：本次编辑是否改过任何字段，供 beforeunload 决定是否提示离开
+  state.wo = { draft, timerId: null, editingId, editingRef: o.session || null, editDirty: false };
   setWorkoutMode(true);
   renderWorkout(d);
   window.scrollTo({ top: 0 });
@@ -473,6 +497,8 @@ export function renderWorkout(d) {
   view.innerHTML = "";
   const { wo } = state;
   const dr = wo.draft;
+  // 编辑模式脏标记：任何修改入口都置位，beforeunload 据此提示离开
+  const markDirty = () => { wo.editDirty = true; };
   const { done: doneSets, total: totalSets } = countDone(dr);
 
   const head = el("div", "card wo-summary");
@@ -489,7 +515,7 @@ export function renderWorkout(d) {
   head.appendChild(chips(
     [0, 1, 2, 3, 4].map(v => ({ v, label: "RIR " + v, warn: v <= 1 })),
     dr.rir,
-    v => { dr.rir = v; dr.touched = true; saveDB(); }
+    v => { markDirty(); dr.rir = v; dr.touched = true; saveDB(); }
   ));
 
   head.appendChild(el("label", "field-label", "疼痛评分（0 = 无痛，10 = 无法忍受）"));
@@ -499,6 +525,7 @@ export function renderWorkout(d) {
     [0, 2, 4, 6, 8, 10].map(v => ({ v, label: String(v), danger: v >= 4 })),
     painShown,
     v => {
+      markDirty();
       dr.pain = v; dr.touched = true; saveDB();
       if (v >= 4) toast("疼痛 ≥4：停止该动作并考虑就医");
     }
@@ -509,7 +536,7 @@ export function renderWorkout(d) {
   note.type = "text";
   note.placeholder = "例如：睡眠不足，整体降了 5kg";
   note.value = dr.note || "";
-  note.oninput = () => { dr.note = note.value; dr.touched = true; saveDB(); };
+  note.oninput = () => { markDirty(); dr.note = note.value; dr.touched = true; saveDB(); };
   head.appendChild(note);
   view.appendChild(head);
 
@@ -559,12 +586,13 @@ export function renderWorkout(d) {
     st.sets.forEach((s, si) => {
       card.appendChild(setRow(m, s, si,
         () => {
+          markDirty();
           s.done = !s.done;
           if (s.done && !s.reps && !extra) s.reps = m.lo;
           dr.touched = true;
           saveDB();
         },
-        (field, value) => { s[field] = value; dr.touched = true; saveDB(); }
+        (field, value) => { markDirty(); s[field] = value; dr.touched = true; saveDB(); }
       ));
     });
 
@@ -573,6 +601,7 @@ export function renderWorkout(d) {
       fill.onclick = () => {
         const target = prev.move.sets.find(x => x.weight);
         if (!target) { toast("上次没有重量记录"); return; }
+        markDirty();
         st.sets.forEach(s => { s.weight = target.weight; });
         dr.touched = true;
         saveDB();
@@ -647,7 +676,8 @@ export function finishWorkout(d) {
   if (wo.editingId) {
     // 编辑模式：覆盖原记录，id 与时长保持不变
     if (!confirm(`保存修改？将更新 ${fmtDate(dr.date)} 的这条记录。`)) return;
-    const idx = db.sessions.findIndex(x => x.id === wo.editingId);
+    // 按打开编辑时的记录对象定位；对象不在当前数组（跨标签页同步替换过）走既有提示
+    const idx = db.sessions.indexOf(wo.editingRef);
     if (idx < 0) { toast("这条记录已经不在了"); return; }
     const before = db.sessions[idx];
     db.sessions[idx] = {
