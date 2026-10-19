@@ -3,7 +3,8 @@
 import { PLAN } from "../data.js";
 import {
   html, list, esc, el, chips, setRow, moveBadge, fmtDate, pad, today,
-  db, saveDB, toast, uid, setSheet, $, $$, closeSheet, validSessions
+  db, saveDB, toast, uid, setSheet, $, closeSheet, validSessions, validDraft,
+  brokenCard
 } from "./core.js";
 import { dayById, plannedDayId } from "./plan.js";
 
@@ -39,12 +40,21 @@ export function getDraft(dayId, date) {
   const d0 = dayById(dayId);
   // 已有草稿一律续用，绝不覆盖。
   // 早期版本在「开始今天」时会用空草稿覆盖同一天的旧草稿，导致已勾选的组和备注丢失。
-  if (!db.drafts[k]) {
-    db.drafts[k] = { key: k, dayId, date, startedAt: null, elapsedMs: 0, lastResumedAt: null, touched: false,
-                     moves: d0 ? emptyMoves(d0, date) : [], rir: 2, pain: 0, note: "" };
+  // 只有结构损坏的草稿（坏导入、手改 localStorage）才按计划重建，否则一开训练就崩。
+  let dr = db.drafts[k];
+  if (!validDraft(dr)) {
+    const old = dr && typeof dr === "object" ? dr : {};
+    dr = {
+      key: k, dayId, date, startedAt: old.startedAt || null,
+      elapsedMs: old.elapsedMs || 0, lastResumedAt: null, touched: false,
+      moves: d0 ? emptyMoves(d0, date) : [],
+      rir: old.rir != null ? old.rir : 2,
+      pain: old.pain != null ? old.pain : 0,
+      note: old.note || "",
+    };
+    db.drafts[k] = dr;
   }
   // 旧版草稿迁移：逐动作 rir/pain/note 收敛到训练级
-  const dr = db.drafts[k];
   if (dr.rir == null || dr.pain == null) {
     const legacyPain = Math.max(...dr.moves.map(m => m.pain || 0), 0);
     const legacyNote = dr.moves.map(m => m.note).find(Boolean) || "";
@@ -63,6 +73,27 @@ export function countDone(dr) {
   let done = 0, total = 0;
   dr.moves.forEach(m => m.sets.forEach(s => { total++; if (s.done) done++; }));
   return { done, total };
+}
+
+// 切回记录页：tab 路由与 aria-current 由 app.js 统一维护，这里只发请求
+function goLog() {
+  document.dispatchEvent(new CustomEvent("navigate", { detail: { tab: "log" } }));
+}
+
+// 旧记录的动作级 note/rir/pain 带进编辑草稿，保存时原样写回，别在编辑时丢数据
+function withLegacy(move, rec) {
+  if (!rec) return move;
+  if (typeof rec.note === "string" && rec.note) move.note = rec.note;
+  if (rec.rir != null) move.rir = rec.rir;
+  if (rec.pain != null) move.pain = rec.pain;
+  return move;
+}
+
+// 疼痛只有偶数档；旧记录的 9 吸附到 10，避免编辑时没有任何一档选中
+function snapPain(v) {
+  const n = +v;
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(10, n % 2 === 1 ? n + 1 : n));
 }
 
 /* ---------------- 记录页 ---------------- */
@@ -106,11 +137,12 @@ export function renderLog(view, subEl) {
   c.appendChild(go);
   view.appendChild(c);
 
-  // 清理僵尸草稿：开了训练但什么都没动就退出
+  // 清理僵尸草稿：开了训练但什么都没动就退出；结构坏掉的草稿也一并删掉
   let dropped = false;
   Object.keys(db.drafts).forEach(k => {
     const dr = db.drafts[k];
-    if (dr && dr.touched === false && countDone(dr).done === 0) {
+    if (!validDraft(dr)) { delete db.drafts[k]; dropped = true; return; }
+    if (dr.touched === false && countDone(dr).done === 0) {
       delete db.drafts[k];
       dropped = true;
     }
@@ -122,7 +154,7 @@ export function renderLog(view, subEl) {
     view.appendChild(el("div", "section-h", "未完成的训练"));
     keys.forEach(k => {
       const dr = db.drafts[k];
-      if (!dr || !dr.moves) return;
+      if (!validDraft(dr)) return;
       const d = dayById(dr.dayId);
       if (!d) return;
       const { done, total } = countDone(dr);
@@ -132,7 +164,7 @@ export function renderLog(view, subEl) {
       row.style.borderLeft = `3px solid var(--d-${dr.dayId})`;
       row.innerHTML = html`
         <div class="row-main">
-          <div class="row-title">${esc(d.name)} · ${fmtDate(dr.date)}</div>
+          <div class="row-title">${esc(d.name)} · ${esc(fmtDate(dr.date))}</div>
           <div class="row-sub">已完成 ${done}/${total} 组</div>
         </div>
         <span class="row-resume">继续</span>`;
@@ -146,8 +178,9 @@ export function renderLog(view, subEl) {
       drop.setAttribute("aria-label", `放弃 ${d.name} ${dr.date} 的未完成训练`);
       drop.onclick = () => {
         if (!confirm(`放弃 ${d.name} ${fmtDate(dr.date)} 的这次未完成训练？已填的数据会丢失。`)) return;
-        delete db.drafts[dr.key];
-        saveDB();
+        const before = db.drafts[k];
+        delete db.drafts[k];
+        if (!saveDB()) { db.drafts[k] = before; return; }
         renderLog(view, subEl);
         toast("已放弃草稿");
       };
@@ -164,13 +197,7 @@ export function renderLog(view, subEl) {
   // 残缺记录无法显示，在这里说明去向，别让用户以为记录丢了
   const valid = validSessions();
   const broken = db.sessions.length - valid.length;
-  if (broken) {
-    const w = el("div", "card card-warn");
-    w.innerHTML = html`
-      <div class="card-title card-title-danger">⚠️ 有 ${broken} 条记录格式异常已跳过</div>
-      <p class="card-sub">这些记录缺少动作数据，无法显示。可在进度页导出备份后手动清理。</p>`;
-    view.appendChild(w);
-  }
+  if (broken) view.appendChild(brokenCard(broken));
   const listBox = el("div", "card");
   valid.sort((a, b) => (a.date < b.date ? 1 : -1)).forEach(s => {
     const d = dayById(s.dayId);
@@ -183,9 +210,9 @@ export function renderLog(view, subEl) {
     row.style.borderLeft = `3px solid var(--d-${s.dayId})`;
     row.innerHTML = html`
       <div class="row-main">
-        <div class="row-title">${esc(d ? d.name : s.dayId)} · ${fmtDate(s.date)}</div>
-        <div class="row-sub">${sets} 组 · 容量 ${Math.round(vol)} kg · 时长 ${s.durationMin || "—"} 分
-          ${s.maxPain >= 4 ? ` · <span class="text-danger-strong">疼痛 ${s.maxPain}/10</span>` : ""}</div>
+        <div class="row-title">${esc(d ? d.name : s.dayId)} · ${esc(fmtDate(s.date))}</div>
+        <div class="row-sub">${sets} 组 · 容量 ${Math.round(vol)} kg · 时长 ${esc(s.durationMin || "—")} 分
+          ${s.maxPain >= 4 ? ` · <span class="text-danger-strong">疼痛 ${esc(s.maxPain)}/10</span>` : ""}</div>
       </div>
       <span class="row-arrow" aria-hidden="true">›</span>`;
     row.setAttribute("aria-label", `查看 ${d ? d.name : s.dayId} ${s.date} 的训练详情`);
@@ -208,15 +235,15 @@ export function showSessionSheet(id) {
 
   const headerHtml = html`
     <div class="card-title sheet-head-title">${esc(d ? d.name : s.dayId)}</div>
-    <p class="card-sub">${fmtDate(s.date)} · ${sets} 组 · 容量 ${Math.round(vol)} kg</p>`;
+    <p class="card-sub">${esc(fmtDate(s.date))} · ${sets} 组 · 容量 ${Math.round(vol)} kg</p>`;
 
   let body = "";
   if (s.rir != null || s.maxPain != null) {
     body += html`
       <div class="flex-gap-8 mb-6">
-        <span class="badge primary">RIR ${s.rir != null ? s.rir : "—"}</span>
-        <span class="badge${(s.maxPain || 0) >= 4 ? "" : " cardio"}">疼痛 ${s.maxPain || 0}/10</span>
-        ${s.durationMin ? `<span class="badge">${s.durationMin} 分钟</span>` : ""}
+        <span class="badge primary">RIR ${esc(s.rir != null ? s.rir : "—")}</span>
+        <span class="badge${(s.maxPain || 0) >= 4 ? "" : " cardio"}">疼痛 ${esc(s.maxPain || 0)}/10</span>
+        ${s.durationMin ? `<span class="badge">${esc(s.durationMin)} 分钟</span>` : ""}
       </div>`;
   }
   if (s.note) body += html`<p class="move-tip mt-4">${esc(s.note)}</p>`;
@@ -225,7 +252,7 @@ export function showSessionSheet(id) {
     body += html`<table class="data"><thead><tr><th>组</th><th>重量 kg</th><th>次数</th><th>完成</th></tr></thead>
       <tbody>${list(m.sets, (x, i) => html`<tr><td>${i + 1}</td><td>${esc(x.weight || "-")}</td><td>${esc(x.reps || "-")}</td><td>${x.done ? "✓" : "—"}</td></tr>`)}</tbody></table>`;
     if (m.note) body += html`<div class="move-tip">备注：${esc(m.note)}</div>`;
-    if (m.rir != null) body += html`<div class="move-tip">RIR ${m.rir} · 疼痛 ${m.pain || 0}/10</div>`;
+    if (m.rir != null) body += html`<div class="move-tip">RIR ${esc(m.rir)} · 疼痛 ${esc(m.pain || 0)}/10</div>`;
     body += "</div>";
   });
 
@@ -238,10 +265,11 @@ export function showSessionSheet(id) {
   const delBtn = el("button", "btn danger full", "删除这条记录");
   delBtn.onclick = () => {
     if (!confirm(`删除 ${fmtDate(s.date)} 的这条训练记录？此操作不可撤销。`)) return;
+    const before = db.sessions;
     db.sessions = db.sessions.filter(x => x.id !== s.id);
-    saveDB();
+    if (!saveDB()) { db.sessions = before; return; }
     closeSheet();
-    renderLog($("#view"), $("#appbarSub"));
+    goLog();
     toast("已删除");
   };
   foot.append(editBtn, delBtn);
@@ -343,18 +371,18 @@ export function openWorkout(dayId, date, opts) {
           done: rs ? !!rs.done : false,
         });
       }
-      moves.push({ index: moves.length, name: m.name, sets });
+      moves.push(withLegacy({ index: moves.length, name: m.name, sets }, rec));
     });
     // 计划里已删掉、但历史里还留着的动作：照样可见可改，不丢数据
     recorded.forEach(rec => {
-      moves.push({
+      moves.push(withLegacy({
         index: moves.length, name: rec.name,
         sets: (rec.sets || []).map(s => ({
           weight: s.weight != null ? s.weight : "",
           reps: s.reps != null ? s.reps : "",
           done: !!s.done,
         })),
-      });
+      }, rec));
     });
     draft = {
       key: "edit:" + s.id, dayId, date, startedAt: s.startedAt || Date.now(),
@@ -367,6 +395,7 @@ export function openWorkout(dayId, date, opts) {
     if (draft.elapsedMs == null) draft.elapsedMs = Math.max(0, Date.now() - draft.startedAt);
     if (draft.touched == null) draft.touched = true;
   }
+  draft.pain = snapPain(draft.pain);
   resumeClock(draft);
   if (!editingId) saveDB();
   state.wo = { draft, timerId: null, editingId };
@@ -377,11 +406,16 @@ export function openWorkout(dayId, date, opts) {
 
 export function closeWorkout(save) {
   if (state.wo) pauseClock(state.wo.draft);
+  if (save && !saveDB()) {
+    // 没写进磁盘就别退出训练页，时钟接着走，让用户能重试
+    if (state.wo) { resumeClock(state.wo.draft); startTimer(); }
+    return false;
+  }
   stopTimer();
   state.wo = null;
   setWorkoutMode(false);
-  if (save) saveDB();
-  renderLog($("#view"), $("#appbarSub"));
+  goLog();
+  return true;
 }
 
 export function renderWorkout(d) {
@@ -396,7 +430,7 @@ export function renderWorkout(d) {
     <div class="wo-head">
       <div class="wo-head-main">
         <div class="card-title">${esc(d.name)}</div>
-        <p class="card-sub" id="woSub" aria-live="polite">${dr.date} · 已完成 ${doneSets}/${totalSets} 组</p>
+        <p class="card-sub" id="woSub" aria-live="polite">${esc(dr.date)} · 已完成 ${doneSets}/${totalSets} 组</p>
       </div>
       <div class="flex-center">${ringSvg(doneSets, totalSets)}<div id="timer" class="timer">--:--</div></div>
     </div>`;
@@ -409,10 +443,10 @@ export function renderWorkout(d) {
   ));
 
   head.appendChild(el("label", "field-label", "疼痛评分（0 = 无痛，10 = 无法忍受）"));
-  // 偶数刻度；旧记录的奇数值就近吸附
-  const painShown = dr.pain % 2 === 1 ? dr.pain + 1 : dr.pain;
+  // 偶数刻度；旧记录的奇数值在 openWorkout 里已就近吸附
+  const painShown = snapPain(dr.pain);
   head.appendChild(chips(
-    [0, 2, 4, 6, 8].map(v => ({ v, label: String(v), danger: v >= 4 })),
+    [0, 2, 4, 6, 8, 10].map(v => ({ v, label: String(v), danger: v >= 4 })),
     painShown,
     v => {
       dr.pain = v; dr.touched = true; saveDB();
@@ -528,8 +562,9 @@ export function renderWorkout(d) {
   woFinishBtn.onclick = () => finishWorkout(d);
   woExitBtn.onclick = () => {
     if (wo.editingId) { closeWorkout(false); toast("已放弃修改"); return; }
-    closeWorkout(true);
-    toast("已保存草稿");
+    const hasContent = dr.touched === true || countDone(dr).done > 0;
+    if (!closeWorkout(true)) return;
+    toast(hasContent ? "已保存草稿" : "这次没有记录任何内容");
   };
 }
 
@@ -547,30 +582,37 @@ export function finishWorkout(d) {
 
   // 兼容旧版草稿：逐动作疼痛取最大值并入训练级
   const legacyPain = Math.max(...dr.moves.map(m => m.pain || 0), 0);
-  const moves = dr.moves.map(m => ({
-    name: m.name,
-    sets: m.sets.map(s => ({ weight: s.weight, reps: s.reps, done: !!s.done })),
-  }));
+  // 动作级 note/rir/pain 是旧版字段，编辑时原样保留，不要悄悄删掉
+  const moves = dr.moves.map(m => {
+    const out = {
+      name: m.name,
+      sets: m.sets.map(s => ({ weight: s.weight, reps: s.reps, done: !!s.done })),
+    };
+    if (m.note) out.note = m.note;
+    if (m.rir != null) out.rir = m.rir;
+    if (m.pain != null) out.pain = m.pain;
+    return out;
+  });
 
   if (wo.editingId) {
     // 编辑模式：覆盖原记录，id 与时长保持不变
     if (!confirm(`保存修改？将更新 ${fmtDate(dr.date)} 的这条记录。`)) return;
     const idx = db.sessions.findIndex(x => x.id === wo.editingId);
-    if (idx >= 0) {
-      db.sessions[idx] = {
-        ...db.sessions[idx],
-        date: dr.date, moves,
-        rir: dr.rir ?? 2,
-        maxPain: Math.max(dr.pain || 0, legacyPain),
-        note: dr.note || "",
-      };
-    }
-    saveDB();
+    if (idx < 0) { toast("这条记录已经不在了"); return; }
+    const before = db.sessions[idx];
+    db.sessions[idx] = {
+      ...before,
+      date: dr.date, moves,
+      rir: dr.rir ?? 2,
+      maxPain: Math.max(dr.pain || 0, legacyPain),
+      note: dr.note || "",
+    };
+    if (!saveDB()) { db.sessions[idx] = before; return; }
     stopTimer();
     state.wo = null;
     setWorkoutMode(false);
     toast("已更新");
-    renderLog($("#view"), $("#appbarSub"));
+    goLog();
     return;
   }
 
@@ -585,10 +627,15 @@ export function finishWorkout(d) {
     note: dr.note || "",
   });
   delete db.drafts[dr.key];
-  saveDB();
+  if (!saveDB()) {
+    // 写盘失败：回滚内存状态，训练页保持打开，错误提示留在屏幕上
+    db.sessions.pop();
+    db.drafts[dr.key] = dr;
+    return;
+  }
   stopTimer();
   state.wo = null;
   setWorkoutMode(false);
   toast("训练已保存");
-  renderLog($("#view"), $("#appbarSub"));
+  goLog();
 }

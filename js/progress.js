@@ -1,6 +1,7 @@
 /* 进度页：统计卡片、容量/疼痛图表、最佳组表、数据导入导出 */
 import {
-  html, list, esc, el, fmtDate, parseDate, dateStr, db, saveDB, toast, today, storage, validSessions
+  html, list, esc, el, fmtDate, parseDate, dateStr, db, saveDB, toast, today, storage, validSessions,
+  brokenCard
 } from "./core.js";
 import { weekIndex } from "./plan.js";
 
@@ -56,13 +57,7 @@ export function renderProgress(view, subEl) {
     view.appendChild(el("div", "empty", "还没有数据。<br>完成一次训练后，这里会出现进度图表。"));
     return;
   }
-  if (broken) {
-    const w = el("div", "card card-warn");
-    w.innerHTML = html`
-      <div class="card-title card-title-danger">⚠️ 有 ${broken} 条记录格式异常已跳过</div>
-      <p class="card-sub">这些记录缺少动作数据，无法统计。可以导出备份后手动清理。</p>`;
-    view.appendChild(w);
-  }
+  if (broken) view.appendChild(brokenCard(broken));
 
   const vol = sessions.reduce((a, s) => a + sessionVolume(s), 0);
 
@@ -104,7 +99,7 @@ export function renderProgress(view, subEl) {
   } else {
     c2.innerHTML += html`<table class="data">
       <thead><tr><th>动作</th><th>最佳组</th><th>日期</th></tr></thead>
-      <tbody>${list(names, n => html`<tr><td>${esc(n)}</td><td>${best[n].w} kg × ${esc(best[n].r || "-")}</td><td>${fmtDate(best[n].d)}</td></tr>`)}</tbody>
+      <tbody>${list(names, n => html`<tr><td>${esc(n)}</td><td>${best[n].w} kg × ${esc(best[n].r || "-")}</td><td>${esc(fmtDate(best[n].d))}</td></tr>`)}</tbody>
     </table>`;
   }
   view.appendChild(c2);
@@ -204,6 +199,11 @@ function paintBars(canvas, data, opt) {
   const cs = getComputedStyle(document.documentElement);
   const cLine = (cs.getPropertyValue("--line") || "#dde4ee").trim();
   const cMuted = (cs.getPropertyValue("--muted") || "#55647a").trim();
+  // 柱子颜色也走主题令牌，别在画布上写死，深浅主题各自生效
+  const cBrand1 = (cs.getPropertyValue("--brand-1") || "#2563eb").trim();
+  const cBrand2 = (cs.getPropertyValue("--brand-2") || "#06b6d4").trim();
+  const cDanger = (cs.getPropertyValue("--danger") || "#ef4444").trim();
+  const cDangerInk = (cs.getPropertyValue("--danger-ink") || "#b91c1c").trim();
 
   const padL = 34, padB = 22, padT = 10;
   const cw = W - padL - 12, ch = H - padT - padB;
@@ -234,13 +234,13 @@ function paintBars(canvas, data, opt) {
     const y = padT + ch - h;
     if (opt.colorDanger && d.value >= 4) {
       const g = ctx.createLinearGradient(x, y, x, y + Math.max(h, 1));
-      g.addColorStop(0, "#f87171");
-      g.addColorStop(1, "#dc2626");
+      g.addColorStop(0, cDanger);
+      g.addColorStop(1, cDangerInk);
       ctx.fillStyle = g;
     } else if (h > 0) {
       const g = ctx.createLinearGradient(x, y, x, y + h);
-      g.addColorStop(0, "#38bdf8");
-      g.addColorStop(1, "#2563eb");
+      g.addColorStop(0, cBrand2);
+      g.addColorStop(1, cBrand1);
       ctx.fillStyle = g;
     } else {
       ctx.fillStyle = cLine;
@@ -286,7 +286,21 @@ export function exportData() {
 export function validateDB(d) {
   if (!d || typeof d !== "object" || Array.isArray(d)) return "不是有效的 JSON 对象";
   if (!Array.isArray(d.sessions)) return "缺少 sessions 数组";
-  if (d.drafts != null && (typeof d.drafts !== "object" || Array.isArray(d.drafts))) return "drafts 必须是对象";
+  if (d.drafts != null) {
+    if (typeof d.drafts !== "object" || Array.isArray(d.drafts)) return "drafts 必须是对象";
+    for (const k of Object.keys(d.drafts)) {
+      const dr = d.drafts[k];
+      if (!dr || typeof dr !== "object" || Array.isArray(dr)) return `草稿 ${k} 不是对象`;
+      if (typeof dr.dayId !== "string" || typeof dr.date !== "string") return `草稿 ${k} 缺少训练日或日期`;
+      if (!Array.isArray(dr.moves)) return `草稿 ${k} 缺少 moves`;
+      for (const m of dr.moves) {
+        if (!m || typeof m.name !== "string" || !Array.isArray(m.sets)) return `草稿 ${k} 的动作数据无效`;
+        for (const st of m.sets) {
+          if (!st || typeof st !== "object") return `草稿 ${k} 有无效的组`;
+        }
+      }
+    }
+  }
   for (let i = 0; i < d.sessions.length; i++) {
     const s = d.sessions[i];
     if (!s || typeof s !== "object") return `第 ${i + 1} 条记录不是对象`;
@@ -303,6 +317,11 @@ export function validateDB(d) {
         if (w != null && typeof w !== "string" && typeof w !== "number") return `第 ${i + 1} 条记录重量格式不对`;
         if (r != null && typeof r !== "string" && typeof r !== "number") return `第 ${i + 1} 条记录次数格式不对`;
       }
+    }
+    // 这几个字段会直接进 innerHTML，必须是数字，否则就是注入点
+    for (const f of ["rir", "maxPain", "durationMin"]) {
+      const v = s[f];
+      if (v != null && (typeof v !== "number" || !Number.isFinite(v))) return `第 ${i + 1} 条记录的 ${f} 必须是数字`;
     }
   }
   return null;
@@ -328,9 +347,15 @@ export function importData() {
       const bad = validateDB(d);
       if (bad) { toast("导入失败：" + bad); return; }
       if (!confirm(`导入会覆盖当前所有记录（${db.sessions.length} 条），确定？`)) return;
+      const prev = { sessions: db.sessions, drafts: db.drafts };
       db.sessions = d.sessions;
       db.drafts = d.drafts || {};
-      saveDB();
+      if (!saveDB()) {
+        // 写盘失败就回滚，别让界面显示成导入成功
+        db.sessions = prev.sessions;
+        db.drafts = prev.drafts;
+        return;
+      }
       renderProgress(document.getElementById("view"), document.getElementById("appbarSub"));
       toast("导入成功");
     };

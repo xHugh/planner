@@ -73,6 +73,8 @@ export function setRow(move, s, si, onToggle, onInput) {
     ck.setAttribute("aria-label", (ck.classList.contains("on") ? "取消完成 第" : "标记完成 第") + (si + 1) + " 组");
     ck.setAttribute("aria-pressed", ck.classList.contains("on") ? "true" : "false");
     onToggle();
+    // 勾选时没填次数，onToggle 会补一个默认值；同步回显，别只写进数据
+    if (!reps.value && s.reps != null && s.reps !== "") reps.value = s.reps;
   };
   cell.appendChild(ck);
 
@@ -173,22 +175,43 @@ export function loadDB() {
 // 模块级单例；各模块 import 同一个引用
 export const db = loadDB();
 
+// 返回是否真的写进了 localStorage：调用方据此决定能不能提示成功、能不能丢草稿
 export function saveDB() {
   try {
     localStorage.setItem(DB_KEY, JSON.stringify(db));
+    return true;
   } catch {
     toast("存储失败：浏览器空间不足");
+    return false;
   }
 }
 
 // 可用记录：旧版本遗留或手改 localStorage 的残缺记录可能缺字段，
 // 消费前统一过滤，避免各页面各自判空时漏掉一处。
-// 每个动作的 sets 也必须是数组——消费端直接 m.sets.forEach，
-// 只查 moves 是数组挡不住「moves 在、某个动作缺 sets」这种。
+// 每个动作的 sets 必须是数组，sets 里的元素也必须是对象——消费端直接
+// m.sets.forEach 再读 x.done，只查 moves 挡不住「sets 缺」和 sets:[null]。
 export function validSessions() {
   return db.sessions.filter(s =>
     s && typeof s.date === "string" && Array.isArray(s.moves)
-    && s.moves.every(m => m && Array.isArray(m.sets)));
+    && s.moves.every(m => m && Array.isArray(m.sets)
+      && m.sets.every(x => x && typeof x === "object")));
+}
+
+// 草稿结构是否可用：缺 moves / sets 的草稿会让记录页和训练页崩
+export function validDraft(dr) {
+  return !!dr && typeof dr === "object" && !Array.isArray(dr)
+    && typeof dr.dayId === "string" && typeof dr.date === "string"
+    && Array.isArray(dr.moves)
+    && dr.moves.every(m => m && typeof m.name === "string" && Array.isArray(m.sets));
+}
+
+// 「有 N 条记录格式异常」告警卡：记录页与进度页共用
+export function brokenCard(count) {
+  const w = el("div", "card card-warn");
+  w.innerHTML = html`
+    <div class="card-title card-title-danger">⚠️ 有 ${count} 条记录格式异常已跳过</div>
+    <p class="card-sub">这些记录缺少动作数据，无法显示或统计。可在进度页导出备份后手动清理。</p>`;
+  return w;
 }
 
 /* ---------------- 持久化存储 ----------------
@@ -196,16 +219,20 @@ export function validSessions() {
 export const storage = { persisted: null };
 const PERSIST_KEY = "gym4.persist.v1";
 
+// 上次的结果先在首屏用上，异步核验回来再更新
+try {
+  const saved = localStorage.getItem(PERSIST_KEY);
+  if (saved === "1") storage.persisted = true;
+  else if (saved === "0") storage.persisted = false;
+} catch {}
+
 export function requestPersist() {
-  if (storage.persisted !== null) return;
   try {
     if (!navigator.storage || !navigator.storage.persisted) return;
     navigator.storage.persisted().then(async p => {
-      if (!p && navigator.storage.persist) {
-        p = await navigator.storage.persist();
-        try { localStorage.setItem(PERSIST_KEY, p ? "1" : "0"); } catch {}
-      }
+      if (!p && navigator.storage.persist) p = await navigator.storage.persist();
       storage.persisted = p;
+      try { localStorage.setItem(PERSIST_KEY, p ? "1" : "0"); } catch {}
       document.dispatchEvent(new CustomEvent("persistchange"));
     }).catch(() => {});
   } catch {}

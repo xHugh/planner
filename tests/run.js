@@ -10,6 +10,7 @@
 const path = require("path");
 const { createServer } = require("http");
 const { readFile, stat } = require("fs").promises;
+const { existsSync } = require("fs");
 const { execSync } = require("child_process");
 
 // 依次尝试常见位置找到 playwright，避免要求在本仓库 npm i
@@ -47,6 +48,11 @@ function loadPlaywright() {
   process.exit(2);
 }
 
+// 仓库的安装提示把浏览器装在 /tmp/pwbrowsers；没设环境变量时自动用上，免得装完又找不到
+// 必须在 require("playwright") 之前设置，它启动时就读这个变量
+if (!process.env.PLAYWRIGHT_BROWSERS_PATH && existsSync("/tmp/pwbrowsers")) {
+  process.env.PLAYWRIGHT_BROWSERS_PATH = "/tmp/pwbrowsers";
+}
 const { chromium } = loadPlaywright();
 const ROOT = path.join(__dirname, "..");
 // 测试用的时区：换 GYM4_TZ 可以在别的星期几跑同一套用例
@@ -260,6 +266,10 @@ const SUITES = [
       t.ok(s && s.moves.every(m => m.rir === undefined), "动作上不再重复存 rir/pain");
       t.ok(!(await page.evaluate(() => document.body.classList.contains("in-workout"))), "完成后退出沉浸模式");
       t.eq(await page.evaluate(() => getComputedStyle(document.querySelector(".navbar")).display), "grid", "底栏恢复");
+      // 完成后应该落到记录页，底栏高亮与 aria-current 跟着走
+      t.eq(await page.getAttribute(".nav-btn.active", "data-tab"), "log", "完成后导航高亮到记录页");
+      t.eq(await page.getAttribute('.nav-btn[data-tab="log"]', "aria-current"), "page", "记录页有 aria-current");
+      t.ok((await page.locator("#view").innerText()).includes("训练历史"), "完成后显示记录页内容");
     },
   },
 
@@ -314,7 +324,9 @@ const SUITES = [
       await page.waitForTimeout(400);
       await openToday(page, plan.id);
       await page.click("#woExitBtn");
-      await page.waitForTimeout(600);
+      await page.waitForTimeout(300);
+      t.ok((await page.locator("#toast").innerText()).includes("没有记录"), "空草稿退出时如实提示");
+      await page.waitForTimeout(300);
       await page.click('.nav-btn[data-tab="log"]');
       await page.waitForTimeout(500);
       t.eq(await page.locator(".row-drop").count(), 0, "空草稿不留在「未完成的训练」里");
@@ -353,13 +365,12 @@ const SUITES = [
       t.eq(await page.locator("#view input[type=text]").first().inputValue(), "旧版备注", "备注已迁移");
 
       const d = await page.evaluate(() => JSON.parse(localStorage.getItem("gym4.db.v1")).drafts["w2@2026-10-19"]);
-      t.eq(d.pain, 1, "疼痛已迁移（奇数）");
-      t.ok(d.pain === 1 || d.pain === 2, "疼痛值已落盘");
+      t.eq(d.pain, 2, "旧疼痛值 1 就近吸附到偶数档 2");
 
       await page.click("#woFinishBtn");
       await page.waitForTimeout(600);
       const s = await page.evaluate(() => JSON.parse(localStorage.getItem("gym4.db.v1")).sessions[0]);
-      t.eq(s && s.maxPain, 1, "旧草稿完成时疼痛兜底正确");
+      t.eq(s && s.maxPain, 2, "旧草稿完成时疼痛兜底正确（吸附后的值）");
       t.eq(s && s.rir, 3, "旧草稿完成时 RIR 兜底正确");
     },
   },
@@ -380,6 +391,7 @@ const SUITES = [
       await page.locator("#view .check").nth(0).click();
       await page.waitForTimeout(300);
       t.ok((await page.locator("#woDockCount").innerText()).includes("1/"), "勾选后底栏完成数更新");
+      t.eq(await page.locator("#view input[type=number]").nth(1).inputValue(), "8", "勾选后默认次数回显到输入框");
       const w = await page.evaluate(() => document.getElementById("woDockFill").style.width);
       t.ok(w && w !== "0%", "底栏进度条有宽度：" + w);
       t.ok(/^\d{2}:\d{2}$/.test(await page.locator("#woDockTimer").innerText()), "底栏有计时");
@@ -439,6 +451,9 @@ const SUITES = [
           noSets: m.validateDB({ sessions: [{ id: "a", date: "2026-01-01", moves: [{ name: "x" }] }] }),
           noId: m.validateDB({ sessions: [{ date: "2026-01-01", moves: [] }] }),
           notArray: m.validateDB({ sessions: {} }),
+          badDraft: m.validateDB({ sessions: [], drafts: { "w1@2026-10-20": {
+            key: "w1@2026-10-20", dayId: "w1", date: "2026-10-20", touched: false } } }),
+          badNumber: m.validateDB({ sessions: [{ id: "a", date: "2026-01-01", moves: [], durationMin: "<img>x" }] }),
         };
       });
       t.eq(v.ok, null, "合法数据通过校验");
@@ -447,6 +462,8 @@ const SUITES = [
       t.ok(v.noSets && v.noSets.includes("sets"), "缺 sets 被拒：" + v.noSets);
       t.ok(v.noId && v.noId.includes("id"), "缺 id 被拒：" + v.noId);
       t.ok(v.notArray && v.notArray.includes("sessions"), "sessions 不是数组被拒：" + v.notArray);
+      t.ok(v.badDraft && v.badDraft.includes("草稿"), "缺 moves 的草稿被拒：" + v.badDraft);
+      t.ok(v.badNumber && v.badNumber.includes("必须是数字"), "非数字 durationMin 被拒：" + v.badNumber);
 
       // 坏数据落盘后，进度页不能整页崩
       await page.evaluate(() => {
@@ -456,6 +473,9 @@ const SUITES = [
             // moves 在、但某个动作缺 sets：消费端会直接 m.sets.forEach，过滤必须挡掉
             { id: "badSets", dayId: "w1", date: "2026-10-15", durationMin: 40, maxPain: 0, rir: 2, note: "",
               moves: [{ name: "上斜推胸机" }] },
+            // sets 是数组但元素是 null：消费端直接读 x.done，过滤必须挡掉
+            { id: "badNull", dayId: "w1", date: "2026-10-14", durationMin: 40, maxPain: 0, rir: 2, note: "",
+              moves: [{ name: "蝴蝶机夹胸", sets: [null] }] },
             { id: "ok", dayId: "w1", date: "2026-10-17", durationMin: 52, maxPain: 0, rir: 2, note: "",
               moves: [{ name: "坐姿推胸机", sets: [{ weight: "80", reps: "9", done: true }] }] },
           ], drafts: {},
@@ -467,7 +487,7 @@ const SUITES = [
       await page.waitForTimeout(600);
       t.ok(await page.locator(".stat").count() >= 3, "残缺记录不影响统计渲染");
       t.ok((await page.locator("#view").innerText()).includes("格式异常"), "残缺记录有提示");
-      t.ok((await page.locator("#view").innerText()).includes("有 2 条记录格式异常已跳过"), "缺 sets 的动作也算残缺");
+      t.ok((await page.locator("#view").innerText()).includes("有 3 条记录格式异常已跳过"), "缺 sets 和 sets:[null] 都算残缺");
 
       // 同一条残缺记录在记录页也不能把页面打崩：历史列表、开始新训练、详情弹窗
       await page.click('.nav-btn[data-tab="log"]');
@@ -485,7 +505,7 @@ const SUITES = [
       const sheet = await page.evaluate(async () => {
         const m = await import("./js/log.js");
         const out = [];
-        for (const id of ["bad", "badSets"]) {
+        for (const id of ["bad", "badSets", "badNull"]) {
           try { m.showSessionSheet(id); out.push("no throw"); }
           catch (e) { out.push(e.constructor.name + ": " + e.message); }
         }
@@ -493,6 +513,124 @@ const SUITES = [
       });
       t.eq(sheet[0], "no throw", "残缺记录的详情弹窗不抛错");
       t.eq(sheet[1], "no throw", "缺 sets 的记录详情弹窗不抛错");
+      t.eq(sheet[2], "no throw", "sets:[null] 的记录详情弹窗不抛错");
+
+      // 草稿里缺 moves（坏导入、手改）不能崩记录页，也不能变成删不掉又看不见的僵尸
+      await page.evaluate(() => {
+        const raw = JSON.parse(localStorage.getItem("gym4.db.v1"));
+        raw.drafts["w2@2026-10-18"] = { key: "w2@2026-10-18", dayId: "w2", date: "2026-10-18", touched: false };
+        localStorage.setItem("gym4.db.v1", JSON.stringify(raw));
+      });
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(400);
+      await page.click('.nav-btn[data-tab="log"]');
+      await page.waitForTimeout(500);
+      t.eq(await page.locator("#view .row-drop").count(), 0, "坏草稿不显示");
+      t.eq(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("gym4.db.v1")).drafts).length), 0, "坏草稿被清理");
+
+      // 落盘的数字字段是字符串时，渲染不能把它当 HTML 执行
+      await page.evaluate(() => {
+        localStorage.setItem("gym4.db.v1", JSON.stringify({
+          sessions: [{ id: "xss", dayId: "w1", date: "2026-10-16", moves: [],
+            durationMin: '<img src=x onerror="window.__pwned=1">' }],
+          drafts: {},
+        }));
+      });
+      await page.reload({ waitUntil: "networkidle" });
+      await page.evaluate(() => { window.__pwned = 0; });
+      await page.waitForTimeout(300);
+      await page.click('.nav-btn[data-tab="log"]');
+      await page.waitForTimeout(500);
+      t.eq(await page.evaluate(() => window.__pwned), 0, "注入串不会被执行");
+      t.ok((await page.locator("#view").innerText()).includes("<img"), "注入串按文本显示");
+    },
+  },
+
+  {
+    name: "data · 写盘失败与旧记录编辑",
+    async run(page, t, base) {
+      await page.goto(base, { waitUntil: "networkidle" });
+      await page.evaluate(() => localStorage.clear());
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(400);
+
+      await openDay(page, "w1");
+      await page.locator("#view .check").first().click();
+      await page.waitForTimeout(200);
+
+      // localStorage 写失败（配额满 / 私有模式）：不能提示成功，也不能丢掉训练页
+      await page.evaluate(() => {
+        window.__setItem = Storage.prototype.setItem;
+        Storage.prototype.setItem = function () { throw new Error("QuotaExceededError"); };
+      });
+      await page.click("#woFinishBtn");
+      await page.waitForTimeout(400);
+      t.ok((await page.locator("#toast").innerText()).includes("存储失败"), "写盘失败时保留错误提示");
+      t.eq(await page.locator(".wo-summary").count(), 1, "写盘失败时留在训练页");
+      t.eq(await page.evaluate(() => JSON.parse(localStorage.getItem("gym4.db.v1")).sessions.length), 0, "写盘失败时没有假装保存");
+      await page.evaluate(() => { Storage.prototype.setItem = window.__setItem; });
+      await page.click("#woFinishBtn");
+      await page.waitForTimeout(700);
+      t.eq(await page.evaluate(() => JSON.parse(localStorage.getItem("gym4.db.v1")).sessions.length), 1, "恢复后可以正常完成");
+
+      // 旧记录的动作级 note/rir/pain 编辑保存后不能丢；疼痛 9 吸附到 10
+      await page.evaluate(() => {
+        localStorage.setItem("gym4.db.v1", JSON.stringify({ sessions: [{
+          id: "legacy", dayId: "w1", date: "2026-10-16", durationMin: 50, maxPain: 9, rir: 2, note: "训练级备注",
+          moves: [{ name: "坐姿推胸机", note: "动作备注", rir: 3, pain: 1,
+                    sets: [{ weight: "80", reps: "9", done: true }] }],
+        }], drafts: {} }));
+      });
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(400);
+      await page.click('.nav-btn[data-tab="log"]');
+      await page.waitForTimeout(400);
+      await page.locator("#view .row-tap").first().click();
+      await page.waitForTimeout(400);
+      await page.click('#sheetFooter button:has-text("编辑这条记录")');
+      await page.waitForTimeout(600);
+      t.eq(await page.locator(".wo-summary .chips").nth(1).locator(".pick.on").innerText(), "10", "旧疼痛值 9 吸附到 10");
+      await page.click("#woFinishBtn");
+      await page.waitForTimeout(700);
+      const rec = await page.evaluate(() => JSON.parse(localStorage.getItem("gym4.db.v1")).sessions[0]);
+      t.eq(rec.moves[0].note, "动作备注", "动作级备注保留");
+      t.eq(rec.moves[0].rir, 3, "动作级 RIR 保留");
+      t.eq(rec.moves[0].pain, 1, "动作级疼痛保留");
+      t.eq(rec.maxPain, 10, "训练级疼痛吸附为 10");
+    },
+  },
+
+  {
+    name: "data · 两个标签页相互同步",
+    async run(page, t, base) {
+      await page.goto(base, { waitUntil: "networkidle" });
+      await page.evaluate(() => localStorage.clear());
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(400);
+
+      const other = await page.context().newPage();
+      other.on("dialog", d => d.accept());
+      await other.goto(base, { waitUntil: "networkidle" });
+      await other.waitForTimeout(400);
+
+      // A 完成一次训练
+      await openDay(page, "w1");
+      await page.locator("#view .check").first().click();
+      await page.click("#woFinishBtn");
+      await page.waitForTimeout(700);
+      t.eq(await page.evaluate(() => JSON.parse(localStorage.getItem("gym4.db.v1")).sessions.length), 1, "A 保存了 1 条记录");
+
+      // B 空闲时收到 storage 事件并同步，之后再保存不能把 A 的记录冲掉
+      await other.waitForTimeout(1200);
+      await other.click('.nav-btn[data-tab="log"]');
+      await other.waitForTimeout(500);
+      t.eq(await other.locator("#view .row-tap").count(), 1, "B 同步到了 A 的记录");
+      await other.locator("#view .btn.solid.full").first().click();
+      await other.waitForTimeout(500);
+      await other.locator("#view .check").first().click();
+      await other.waitForTimeout(400);
+      t.eq(await other.evaluate(() => JSON.parse(localStorage.getItem("gym4.db.v1")).sessions.length), 1, "B 保存时没有覆盖 A 的记录");
+      await other.close();
     },
   },
 
@@ -676,7 +814,20 @@ const SUITES = [
     console.log(`静态服务已启动：${base}`);
   }
 
-  const browser = await chromium.launch();
+  let browser;
+  try {
+    browser = await chromium.launch();
+  } catch (e) {
+    console.error(
+      "\n  启动 Chromium 失败：" + e.message.split("\n")[0] + "\n" +
+      "  请安装浏览器（仅开发用，App 本身零依赖）：\n" +
+      "    mkdir -p /tmp/pwtest && cd /tmp/pwtest && npm i playwright@1\n" +
+      "    PLAYWRIGHT_BROWSERS_PATH=/tmp/pwbrowsers npx playwright install chromium\n" +
+      "  或把 PLAYWRIGHT_BROWSERS_PATH 指向已安装浏览器的目录。\n"
+    );
+    if (server) server.close();
+    process.exit(2);
+  }
   const t = new Assert();
   let errored = false;
 

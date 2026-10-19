@@ -1,6 +1,6 @@
 /* 计划页：今日大卡、一周安排、训练日卡片、计划弹层、休息日弹层 */
 import { PLAN } from "../data.js";
-import { html, list, esc, el, today, setSheet, moveBadge } from "./core.js";
+import { html, list, esc, el, today, setSheet, moveBadge, closeSheet } from "./core.js";
 
 export function weekIndex(d) { return (d.getDay() + 6) % 7; }
 export function plannedDayId(d) { return PLAN.week[weekIndex(d)]; }
@@ -132,7 +132,6 @@ export function showPlanSheet(dayId) {
 
   const goBtn = el("button", "btn solid full", "按这个计划开练");
   goBtn.onclick = async () => {
-    const { closeSheet } = await import("./core.js");
     const { openWorkout } = await import("./log.js");
     closeSheet();
     openWorkout(dayId, today());
