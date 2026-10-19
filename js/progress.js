@@ -40,6 +40,14 @@ export function aggregateByWeek(sessions, weeks) {
   return all.slice(-weeks);
 }
 
+// 进度统计口径：只计入日期不晚于今天的记录。
+// 未来日期只会来自手改 localStorage 或旧备份导入，不进统计与图表；
+// 记录页历史列表不走这里，未来记录仍可查看（spec: progress-stats）。
+export function countableSessions(sessions) {
+  const td = today();
+  return sessions.filter(s => s.date <= td);
+}
+
 /* ---------------- 页面 ---------------- */
 let active = false;
 
@@ -51,7 +59,8 @@ export function renderProgress(view, subEl) {
   // 防御：结构异常的历史记录跳过，不让整页崩掉
   const valid = validSessions();
   const broken = db.sessions.length - valid.length;
-  const sessions = valid.sort((a, b) => (a.date < b.date ? -1 : 1));
+  // 未来日期的记录不进统计与图表（口径见 countableSessions）
+  const sessions = countableSessions(valid).sort((a, b) => (a.date < b.date ? -1 : 1));
 
   if (!sessions.length) {
     view.appendChild(el("div", "empty", "还没有数据。<br>完成一次训练后，这里会出现进度图表。"));
@@ -301,10 +310,14 @@ export function validateDB(d) {
       }
     }
   }
+  // id 唯一：重复 id 会让详情/编辑/删除按 id 匹配到错误的记录
+  const ids = new Set();
   for (let i = 0; i < d.sessions.length; i++) {
     const s = d.sessions[i];
     if (!s || typeof s !== "object") return `第 ${i + 1} 条记录不是对象`;
     if (typeof s.id !== "string" || !s.id) return `第 ${i + 1} 条记录缺少 id`;
+    if (ids.has(s.id)) return `第 ${i + 1} 条记录存在重复的记录 id：${s.id}`;
+    ids.add(s.id);
     if (typeof s.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(s.date)) return `第 ${i + 1} 条记录的日期格式不对`;
     if (!Array.isArray(s.moves)) return `第 ${i + 1} 条记录缺少 moves`;
     for (let j = 0; j < s.moves.length; j++) {
