@@ -36,8 +36,9 @@ const server = http.createServer(async (req, res) => {
   if (rel.endsWith("/")) rel += "index.html";
   const file = path.join(ROOT, rel);
 
-  // 防止路径穿越
-  if (!file.startsWith(ROOT)) {
+  // 防止路径穿越：按目录边界判定，不能用裸 startsWith——
+  // 同前缀的兄弟目录（如 gym-pwa-backup/）会被裸前缀匹配放行
+  if (file !== ROOT && !file.startsWith(ROOT + path.sep)) {
     res.writeHead(403, { "Content-Type": "text/plain" }).end("403");
     return;
   }
