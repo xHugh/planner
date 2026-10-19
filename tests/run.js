@@ -389,7 +389,7 @@ const SUITES = [
       await page.goto(base, { waitUntil: "networkidle" });
 
       const v = await page.evaluate(async () => {
-        const m = await import("/js/progress.js");
+        const m = await import("./js/progress.js");
         const good = { sessions: [{ id: "a", date: "2026-01-01", dayId: "w1",
           moves: [{ name: "坐姿推胸机", sets: [{ weight: "80", reps: "9", done: true }] }] }] };
         return {
@@ -502,7 +502,7 @@ const SUITES = [
       await page.waitForTimeout(900);
 
       const agg = await page.evaluate(async () => {
-        const m = await import("/js/progress.js");
+        const m = await import("./js/progress.js");
         const db = JSON.parse(localStorage.getItem("gym4.db.v1"));
         const all = m.aggregateByWeek(db.sessions, 999);
         const shown = m.aggregateByWeek(db.sessions, 12);
