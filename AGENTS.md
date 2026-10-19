@@ -29,8 +29,8 @@ node tests/run.js --url=http://127.0.0.1:8765   # 对已启动的服务跑
 
 ## 结构
 
-- `app.js`：入口，只负责 tab 路由与 `aria-current` 维护；页面渲染在 `js/*.js`。
-- `js/core.js`：共享工具与全局单例——`html`、DOM 辅助、`db`（`localStorage` 单例）、`saveDB`、`validSessions`（过滤残缺记录）、主题、Sheet、`storage`/`requestPersist`（持久化存储）。
+- `app.js`：入口，负责 tab 路由、`aria-current` 与跨标签页同步；页面渲染在 `js/*.js`。
+- `js/core.js`：共享工具与全局单例——`html`、DOM 辅助、`db`（`localStorage` 单例）、`saveDB`（返回是否写盘成功）、`validSessions`/`validDraft`（过滤残缺记录与草稿）、`brokenCard`、主题、Sheet、`storage`/`requestPersist`（持久化存储）。
 - `js/plan.js`：计划页及计划/休息日 sheet；`js/log.js`：记录页、草稿、进行中的训练与记录再编辑；`js/progress.js`：统计、Canvas 图表（`aggregateByWeek`/`drawBars`）、导入导出（`validateDB`）。
 - `data.js`：训练计划唯一数据源，改计划只改这里（`PLAN.days`、`PLAN.week`）。
 - `index.html`：骨架、底部导航、sheet/workout dock/toast/update bar 容器；`style.css`：设计令牌、双主题（`<html data-theme="light|dark">`）、无障碍样式。
@@ -39,16 +39,16 @@ node tests/run.js --url=http://127.0.0.1:8765   # 对已启动的服务跑
 
 ## 关键约束
 
-- **Service Worker 策略**：`sw.js` 对同源 GET 走 **network-first**（3s 超时回退缓存），离线兜底靠 `ASSETS` 预缓存。改线上文件**不需要**手动改版本号，用户下次打开自动是新的；`CACHE`（当前 `gym4-v17`）只用于 `activate` 时清理旧缓存，仍建议递增。新增静态文件必须同步加入 `ASSETS`，否则离线时缺失（`offline` 用例会检查清单完整性）。
+- **Service Worker 策略**：`sw.js` 对同源 GET 走 **network-first**（3s 超时回退缓存），离线兜底靠 `ASSETS` 预缓存。改线上文件**不需要**手动改版本号，用户下次打开自动是新的；`CACHE`（当前 `gym4-v18`）只用于 `activate` 时清理旧缓存，仍建议递增。新增静态文件必须同步加入 `ASSETS`，否则离线时缺失（`offline` 用例会检查清单完整性）。
 - **草稿不可覆盖**：草稿键为 `dayId@date`，同一天同一训练日只有一份。`getDraft()` 命中已有草稿时**一律续用**，绝不能覆盖——覆盖会丢掉用户已勾选的组（历史上出过这个 bug）。要丢弃用记录页草稿行的「✕」按钮。草稿的 `touched` 字段标记用户是否动过它：开了训练什么都没动就退出的空草稿会在渲染时清掉。
 - **训练计时**：`elapsedMs` 是累计活跃时长，`lastResumedAt` 是本次开始时刻。切后台/锁屏走 `visibilitychange` 暂停，计时不增长；`durationMin` 由 `elapsedMs` 得出。
 - **HTML 转义**：`html` 不转义，只用于 `data.js` 等可信常量；动态数据（备注、动作名、导入内容）必须经 `esc()`。现有代码全部是 `html` + 显式 `esc`，照此处理。
-- **残缺记录**：`db.sessions` 里可能混有缺 `date`、缺 `moves`，或某个动作缺 `sets` 的记录（旧版本遗留或手改 localStorage）。读记录一律走 `core.js` 的 `validSessions()` 过滤，不要直接遍历 `db.sessions` 再访问 `s.moves`——漏判一处就会整页崩。`validSessions()` 要同时校验 `moves` 和每个动作的 `sets` 都是数组：消费端直接 `m.sets.forEach`，只查 `moves` 挡不住「moves 在、sets 缺」。`progress.js` 统计页与 `log.js` 记录页都会显示「有 N 条记录格式异常已跳过」。
+- **残缺记录**：`db.sessions` 里可能混有缺 `date`、缺 `moves`，或某个动作缺 `sets`/`sets` 里混了 `null` 的记录（旧版本遗留或手改 localStorage）。读记录一律走 `core.js` 的 `validSessions()` 过滤，不要直接遍历 `db.sessions` 再访问 `s.moves`——漏判一处就会整页崩。`validSessions()` 要同时校验 `moves`、每个动作的 `sets` 数组，以及 `sets` 里的元素是对象：消费端直接 `m.sets.forEach` 再读 `x.done`，只查 `moves` 挡不住「sets 缺」和 `sets:[null]`。草稿同理走 `validDraft()`：坏草稿在记录页渲染时清掉，`getDraft()` 会按计划重建，不能让它崩掉整页或变成删不掉的僵尸。`progress.js` 统计页与 `log.js` 记录页都会显示「有 N 条记录格式异常已跳过」。
 - **主题防闪烁**：`index.html` `<head>` 的内联脚本在首屏前读取 `localStorage` 设置 `data-theme`；改主题逻辑时必须同时改它和 `js/core.js` 的 `applyTheme`。`applyTheme` 会派发 `themechange` 事件，Canvas 图表据此重绘（颜色取自 CSS 变量，不要在 `drawBars` 里硬编码颜色）。
 - **计划数据与历史耦合**：训练日 `id`（`w1`–`w4`、`r1`）同时关联 CSS 变量 `--d-<id>` 和已存记录；动作历史按 `name` 匹配。重命名 id/动作名会让旧历史、草稿、最佳组对不上。
 - **模块依赖环**：`log.js` 静态 import `plan.js`；反过来 `plan.js` 只能 `await import("./log.js")`，训练计数经 `app.js` 的 `setSessionCounter` 注入，避免循环依赖。
 - **双主题颜色**：颜色分别定义在 `:root` 和 `:root[data-theme="dark"]`；新增训练日或颜色两边都要加，`--card-top` 在深色主题必须覆盖，否则白字压白底。**正文用的红色要 `--danger-ink`（浅 `#b91c1c` / 深 `#fca5a5`），不要用 `--danger`**——`--danger` 当文字色在浅底上只有 3.75:1，不达 AA。告警卡用 `.card-warn` 类，深色主题必须覆盖背景。`tests/run.js` 的 `contrastScan` 会把半透明背景逐层合成后计算对比度。
-- **本地数据**：键名 `gym4.db.v1`（`sessions`/`drafts`）、`gym4.theme`、`gym4.persist.v1`、`gym4.backup.hint.v1`；无后端。改数据结构要考虑旧数据迁移（`log.js` 里有旧版草稿兼容代码）。导入 JSON 走 `validateDB()`，结构不对的数据直接拒绝、不写盘。
+- **本地数据**：键名 `gym4.db.v1`（`sessions`/`drafts`）、`gym4.theme`、`gym4.persist.v1`、`gym4.backup.hint.v1`；无后端。改数据结构要考虑旧数据迁移（`log.js` 里有旧版草稿兼容代码）。导入 JSON 走 `validateDB()`（`sessions` 和 `drafts` 都校验，`rir`/`maxPain`/`durationMin` 必须是数字），结构不对的数据直接拒绝、不写盘。`saveDB()` 写盘失败会 toast 并返回 `false`：调用方只在成功时删草稿、提示成功；另一个标签页写入会触发 `storage` 同步（训练中只提醒，不覆盖）。
 
 ## 图标
 
