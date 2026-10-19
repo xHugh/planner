@@ -1,10 +1,14 @@
 /* 铁馆计划 service worker：离线缓存 */
-var CACHE = "gym4-v11";
+var CACHE = "gym4-v12";
 var ASSETS = [
   "./",
   "./index.html",
   "./style.css",
   "./data.js",
+  "./js/core.js",
+  "./js/plan.js",
+  "./js/log.js",
+  "./js/progress.js",
   "./app.js",
   "./manifest.json",
   "./fonts/barlow-condensed-600.woff2",
