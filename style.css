@@ -1103,3 +1103,23 @@ main > *:nth-child(n+6) { animation-delay: .22s; }
   font-weight: 700;
   letter-spacing: .3px;
 }
+
+/* ---------- 草稿行：行 + 放弃按钮 ---------- */
+.row-wrap { display: flex; align-items: center; gap: 8px; }
+.row-wrap .row { flex: 1; min-width: 0; border-top: 0; }
+.row-wrap + .row-wrap { border-top: 1px solid var(--line); }
+.row-drop {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--faint);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.row-drop:active { background: var(--fill); transform: scale(.94); }
+
+/* ---------- 弹层底部多按钮 ---------- */

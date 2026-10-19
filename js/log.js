@@ -34,17 +34,14 @@ export function emptyMoves(day, date) {
   });
 }
 
-export function getDraft(dayId, date, resume) {
+export function getDraft(dayId, date) {
   const k = dayId + "@" + date;
   const d0 = dayById(dayId);
-  // 「开始今天」：同日同训练日的新一次训练，不能续上已勾选的旧草稿
-  if (!resume && db.drafts[k] && d0 && countDone(db.drafts[k]).done > 0) {
-    return { key: k, dayId, date, startedAt: null, fresh: true,
-             moves: emptyMoves(d0, date), rir: 2, pain: 0, note: "" };
-  }
+  // 已有草稿一律续用，绝不覆盖。
+  // 早期版本在「开始今天」时会用空草稿覆盖同一天的旧草稿，导致已勾选的组和备注丢失。
   if (!db.drafts[k]) {
-    db.drafts[k] = { key: k, dayId, date, startedAt: null,
-                     moves: emptyMoves(d0, date), rir: 2, pain: 0, note: "" };
+    db.drafts[k] = { key: k, dayId, date, startedAt: null, elapsedMs: 0, lastResumedAt: null, touched: false,
+                     moves: d0 ? emptyMoves(d0, date) : [], rir: 2, pain: 0, note: "" };
   }
   // 旧版草稿迁移：逐动作 rir/pain/note 收敛到训练级
   const dr = db.drafts[k];
@@ -109,6 +106,17 @@ export function renderLog(view, subEl) {
   c.appendChild(go);
   view.appendChild(c);
 
+  // 清理僵尸草稿：开了训练但什么都没动就退出
+  let dropped = false;
+  Object.keys(db.drafts).forEach(k => {
+    const dr = db.drafts[k];
+    if (dr && dr.touched === false && countDone(dr).done === 0) {
+      delete db.drafts[k];
+      dropped = true;
+    }
+  });
+  if (dropped) saveDB();
+
   const keys = Object.keys(db.drafts);
   if (keys.length) {
     view.appendChild(el("div", "section-h", "未完成的训练"));
@@ -118,6 +126,7 @@ export function renderLog(view, subEl) {
       const d = dayById(dr.dayId);
       if (!d) return;
       const { done, total } = countDone(dr);
+      const wrap = el("div", "row-wrap");
       const row = el("button", "row row-tap");
       row.type = "button";
       row.style.borderLeft = `3px solid var(--d-${dr.dayId})`;
@@ -128,8 +137,22 @@ export function renderLog(view, subEl) {
         </div>
         <span class="row-resume">继续</span>`;
       row.setAttribute("aria-label", `继续 ${d.name} ${dr.date} 的训练`);
-      row.onclick = () => openWorkout(dr.dayId, dr.date, true);
-      view.appendChild(row);
+      row.onclick = () => openWorkout(dr.dayId, dr.date);
+      wrap.appendChild(row);
+
+      // 放弃草稿：唯一能丢弃未完成训练的入口
+      const drop = el("button", "row-drop", "✕");
+      drop.type = "button";
+      drop.setAttribute("aria-label", `放弃 ${d.name} ${dr.date} 的未完成训练`);
+      drop.onclick = () => {
+        if (!confirm(`放弃 ${d.name} ${fmtDate(dr.date)} 的这次未完成训练？已填的数据会丢失。`)) return;
+        delete db.drafts[dr.key];
+        saveDB();
+        renderLog(view, subEl);
+        toast("已放弃草稿");
+      };
+      wrap.appendChild(drop);
+      view.appendChild(wrap);
     });
   }
 
@@ -278,7 +301,7 @@ export function renderWorkout(d) {
   head.appendChild(chips(
     [0, 1, 2, 3, 4].map(v => ({ v, label: "RIR " + v, warn: v <= 1 })),
     dr.rir,
-    v => { dr.rir = v; saveDB(); }
+    v => { dr.rir = v; dr.touched = true; saveDB(); }
   ));
 
   head.appendChild(el("label", "field-label", "疼痛评分（0 = 无痛，10 = 无法忍受）"));
@@ -288,7 +311,7 @@ export function renderWorkout(d) {
     [0, 2, 4, 6, 8].map(v => ({ v, label: String(v), danger: v >= 4 })),
     painShown,
     v => {
-      dr.pain = v; saveDB();
+      dr.pain = v; dr.touched = true; saveDB();
       if (v >= 4) toast("疼痛 ≥4：停止该动作并考虑就医");
     }
   ));
@@ -298,7 +321,7 @@ export function renderWorkout(d) {
   note.type = "text";
   note.placeholder = "例如：睡眠不足，整体降了 5kg";
   note.value = dr.note || "";
-  note.oninput = () => { dr.note = note.value; saveDB(); };
+  note.oninput = () => { dr.note = note.value; dr.touched = true; saveDB(); };
   head.appendChild(note);
   view.appendChild(head);
 
@@ -331,10 +354,11 @@ export function renderWorkout(d) {
       card.appendChild(setRow(m, s, si,
         () => {
           s.done = !s.done;
-          if (s.done && !s.reps) s.reps = m.lo;
+          if (s.done && !s.reps ) s.reps = m.lo;
+          dr.touched = true;
           saveDB();
         },
-        (field, value) => { s[field] = value; saveDB(); }
+        (field, value) => { s[field] = value; dr.touched = true; saveDB(); }
       ));
     });
 
@@ -344,6 +368,7 @@ export function renderWorkout(d) {
         const target = prev.move.sets.find(x => x.weight);
         if (!target) { toast("上次没有重量记录"); return; }
         st.sets.forEach(s => { s.weight = target.weight; });
+        dr.touched = true;
         saveDB();
         renderWorkout(d);
         toast("已填入 " + target.weight + " kg");
