@@ -1,6 +1,6 @@
 // 4 分化固定器械训练计划 —— 唯一数据源
 // 数据来自对话中确认的方案（v3 减伤版，动作全保留）
-window.PLAN = {
+export const PLAN = {
   version: 3,
   title: "4 分化 · 固定器械 · 减伤版",
   rules: [
