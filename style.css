@@ -53,6 +53,9 @@
   --ok: #10b981;
   --warn: #f59e0b;
   --danger: #ef4444;
+  /* 正文用的红/黄：--danger / --warn 作文字色在浅底上不达 AA，另开两个令牌 */
+  --danger-ink: #b91c1c;
+  --warn-ink: #92400e;
 
   /* 玻璃层：随主题切换，不硬编码 */
   --hero-bg: linear-gradient(135deg, #1e3a8a 0%, var(--brand-1) 45%, var(--brand-2) 130%);
@@ -121,6 +124,8 @@
   --ok: #34d399;
   --warn: #fbbf24;
   --danger: #f87171;
+  --danger-ink: #fca5a5;
+  --warn-ink: #fcd34d;
 
   /* 纯黑上阴影几乎不可见，层次主要靠描边 */
   --sh-1: 0 1px 2px rgba(0, 0, 0, .6);
@@ -145,7 +150,7 @@
 :root[data-theme="dark"] .appbar.scrolled { box-shadow: 0 4px 20px rgba(0, 0, 0, .4); }
 :root[data-theme="dark"] .hero { box-shadow: 0 14px 40px rgba(0, 0, 0, .55); }
 :root[data-theme="dark"] .btn.outline { border-color: var(--line); }
-:root[data-theme="dark"] .btn.danger { background: rgba(239, 68, 68, .14); color: #fca5a5; }
+:root[data-theme="dark"] .btn.danger { background: rgba(239, 68, 68, .14); color: var(--danger-ink); }
 :root[data-theme="dark"] .badge.primary { background: rgba(59, 130, 246, .18); color: #93c5fd; }
 :root[data-theme="dark"] .badge.cardio { background: rgba(52, 211, 153, .16); color: #6ee7b7; }
 :root[data-theme="dark"] .sheet-mask { background: rgba(2, 6, 23, .7); }
@@ -399,7 +404,7 @@ main { padding: 14px 16px 24px; }
   box-shadow: var(--sh-brand);
 }
 .btn.outline { background: transparent; border: 1.5px solid var(--line); color: var(--ink-2); }
-.btn.danger { background: #fef2f2; color: var(--danger); }
+.btn.danger { background: #fef2f2; color: var(--danger-ink); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 /* 小按钮同样保证 44px 触摸高度 */
 .btn.sm { min-height: 44px; padding: 10px 16px; font-size: 13.5px; }
@@ -682,8 +687,9 @@ input:focus, select:focus {
   color: #fff;
   box-shadow: var(--sh-brand);
 }
-.pick.warn.on { background: linear-gradient(135deg, #f59e0b, #d97706); box-shadow: 0 8px 20px rgba(245, 158, 11, .32); }
-.pick.danger.on { background: linear-gradient(135deg, #ef4444, #dc2626); box-shadow: 0 8px 20px rgba(239, 68, 68, .32); }
+/* 选中的警示 chip：底色压深，白字才够 4.5:1 */
+.pick.warn.on { background: linear-gradient(135deg, #b45309, #92400e); box-shadow: 0 8px 20px rgba(180, 83, 9, .32); }
+.pick.danger.on { background: linear-gradient(135deg, #dc2626, #b91c1c); box-shadow: 0 8px 20px rgba(220, 38, 38, .32); }
 
 /* ---------- 行 ---------- */
 .row {
@@ -1081,7 +1087,7 @@ main > *:nth-child(n+6) { animation-delay: .22s; }
 .flex-gap-8 { display: flex; gap: 8px; flex-wrap: wrap; }
 
 .text-center { text-align: center; }
-.text-danger-strong { color: var(--danger); font-weight: 700; }
+.text-danger-strong { color: var(--danger-ink); font-weight: 700; }
 
 .sheet-head-title { font-size: 18px; }
 .sheet-head-title-lg { font-size: 19px; }
@@ -1092,7 +1098,14 @@ main > *:nth-child(n+6) { animation-delay: .22s; }
 .card-fill .card-title { margin: 4px 0 0; }
 .card-fill .card-sub { margin-top: 4px; }
 
-.card-title-danger { color: var(--danger); }
+.card-title-danger { color: var(--danger-ink); }
+
+/* 疼痛告警卡：深色主题必须覆盖，否则白底浅字看不清 */
+.card-warn { background: linear-gradient(135deg, #fef2f2, #fff); border: 1px solid #fecaca; }
+:root[data-theme="dark"] .card-warn {
+  background: rgba(248, 113, 113, .10);
+  border-color: rgba(248, 113, 113, .32);
+}
 
 .fill-btn { margin-top: 10px; }
 

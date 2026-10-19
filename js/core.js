@@ -140,6 +140,8 @@ export function applyTheme(mode, announce) {
     document.head.appendChild(meta);
   }
   meta.setAttribute("content", dark ? "#080d16" : "#eef2f8");
+  // 图表等按 CSS 变量着色的元素需要重画
+  document.dispatchEvent(new CustomEvent("themechange"));
   if (announce) toast("主题：" + shown);
 }
 
