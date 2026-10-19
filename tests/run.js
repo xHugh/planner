@@ -85,13 +85,22 @@ class Assert {
 }
 
 // ---------- 工具 ----------
-async function serve(root) {
+async function serve(root, port) {
   const server = createServer(async (req, res) => {
+    let p;
     try {
-      let p = decodeURIComponent(req.url.split("?")[0]);
+      p = decodeURIComponent(req.url.split("?")[0]);
+    } catch {
+      // 非法 percent-encoding：与 scripts/serve.js 行为对齐，返回 400 而不是落到 404
+      res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" }).end("400 Bad Request");
+      return;
+    }
+    try {
       if (p === "/") p = "/index.html";
       const file = path.join(root, p);
-      if (!file.startsWith(root)) { res.writeHead(403).end(); return; }
+      // 防路径穿越：按目录边界判定，不能用裸 startsWith——
+      // 同前缀的兄弟目录（如 gym-pwa-backup/）会被裸前缀匹配放行
+      if (file !== root && !file.startsWith(root + path.sep)) { res.writeHead(403).end(); return; }
       await stat(file);
       const body = await readFile(file);
       res.writeHead(200, { "Content-Type": MIME[path.extname(file)] || "application/octet-stream" });
@@ -100,7 +109,7 @@ async function serve(root) {
       res.writeHead(404, { "Content-Type": "text/plain" }).end("404");
     }
   });
-  await new Promise(r => server.listen(PORT, "127.0.0.1", r));
+  await new Promise(r => server.listen(port || PORT, "127.0.0.1", r));
   return server;
 }
 
@@ -454,6 +463,12 @@ const SUITES = [
           badDraft: m.validateDB({ sessions: [], drafts: { "w1@2026-10-20": {
             key: "w1@2026-10-20", dayId: "w1", date: "2026-10-20", touched: false } } }),
           badNumber: m.validateDB({ sessions: [{ id: "a", date: "2026-01-01", moves: [], durationMin: "<img>x" }] }),
+          dupId: m.validateDB({ sessions: [
+            { id: "a", date: "2026-01-01", moves: [] },
+            { id: "a", date: "2026-01-02", moves: [] }] }),
+          uniqueOk: m.validateDB({ sessions: [
+            { id: "a", date: "2026-01-01", moves: [] },
+            { id: "b", date: "2026-01-02", moves: [] }] }),
         };
       });
       t.eq(v.ok, null, "合法数据通过校验");
@@ -464,6 +479,36 @@ const SUITES = [
       t.ok(v.notArray && v.notArray.includes("sessions"), "sessions 不是数组被拒：" + v.notArray);
       t.ok(v.badDraft && v.badDraft.includes("草稿"), "缺 moves 的草稿被拒：" + v.badDraft);
       t.ok(v.badNumber && v.badNumber.includes("必须是数字"), "非数字 durationMin 被拒：" + v.badNumber);
+      t.ok(v.dupId && v.dupId.includes("重复的记录 id"), "重复 id 被拒：" + v.dupId);
+      t.eq(v.uniqueOk, null, "id 全部唯一时校验通过");
+
+      // 真实导入流程：重复 id 的备份被拒后，现有记录保持不变
+      await page.evaluate(() => {
+        localStorage.setItem("gym4.db.v1", JSON.stringify({ sessions: [{ id: "keep", date: "2026-01-01", dayId: "w1",
+          moves: [{ name: "坐姿推胸机", sets: [{ weight: "80", reps: "9", done: true }] }] }], drafts: {} }));
+      });
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(400);
+      await page.click('.nav-btn[data-tab="progress"]');
+      await page.waitForTimeout(500);
+      const fsMod = require("fs");
+      const dupFile = path.join("/tmp", `gym4-dup-${process.pid}.json`);
+      fsMod.writeFileSync(dupFile, JSON.stringify({ sessions: [
+        { id: "dup", date: "2026-01-01", moves: [] },
+        { id: "dup", date: "2026-01-02", moves: [] }], drafts: {} }));
+      const [fc] = await Promise.all([
+        page.waitForEvent("filechooser"),
+        page.click('#view button:has-text("导入数据")'),
+      ]);
+      await fc.setFiles(dupFile);
+      await page.waitForTimeout(500);
+      const impToast = await page.locator("#toast").innerText();
+      t.ok(impToast.includes("重复的记录 id"), "导入被拒并说明重复 id：" + impToast);
+      const afterImp = await page.evaluate(() =>
+        JSON.parse(localStorage.getItem("gym4.db.v1")).sessions.map(s => s.id));
+      t.eq(afterImp.length, 1, "拒绝后现有记录条数不变");
+      t.eq(afterImp[0], "keep", "拒绝后仍是原有记录，未被覆盖");
+      fsMod.unlinkSync(dupFile);
 
       // 坏数据落盘后，进度页不能整页崩
       await page.evaluate(() => {
@@ -726,6 +771,54 @@ const SUITES = [
   },
 
   {
+    name: "workout · 编辑有修改离开提示",
+    async run(page, t, base) {
+      await page.goto(base, { waitUntil: "networkidle" });
+      await page.evaluate(() => {
+        localStorage.setItem("gym4.db.v1", JSON.stringify({ sessions: [
+          { id: "e1", dayId: "w1", date: "2026-10-16", durationMin: 40, maxPain: 0, rir: 2, note: "",
+            moves: [{ name: "坐姿推胸机", sets: [{ weight: "80", reps: "8", done: true }] }] },
+        ], drafts: {} }));
+      });
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(400);
+
+      // 1) 非编辑状态刷新：不弹离开确认
+      let dialogs = 0;
+      const onDlg = () => { dialogs++; };
+      page.on("dialog", onDlg);
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(400);
+      t.eq(dialogs, 0, "非编辑状态刷新不弹离开确认");
+
+      // 2) 进入编辑但未修改：刷新不弹
+      await page.click('.nav-btn[data-tab="log"]');
+      await page.waitForTimeout(400);
+      await page.locator("#view .row-tap").first().click();
+      await page.waitForTimeout(400);
+      await page.click('#sheetFooter button:has-text("编辑这条记录")');
+      await page.waitForTimeout(600);
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(400);
+      t.eq(dialogs, 0, "编辑未修改时刷新不弹离开确认");
+
+      // 3) 编辑并修改后刷新：弹原生离开确认（runner 的 dialog 监听会自动接受，刷新照常完成）
+      await page.click('.nav-btn[data-tab="log"]');
+      await page.waitForTimeout(400);
+      await page.locator("#view .row-tap").first().click();
+      await page.waitForTimeout(400);
+      await page.click('#sheetFooter button:has-text("编辑这条记录")');
+      await page.waitForTimeout(600);
+      await page.locator("#view input[type=number]").nth(0).fill("95");
+      await page.waitForTimeout(200);
+      await page.reload();
+      await page.waitForTimeout(400);
+      t.eq(dialogs, 1, "编辑有修改时刷新弹出离开确认");
+      page.off("dialog", onDlg);
+    },
+  },
+
+  {
     name: "history · 训练日缺失时编辑有提示",
     async run(page, t, base) {
       await page.goto(base, { waitUntil: "networkidle" });
@@ -753,6 +846,57 @@ const SUITES = [
       t.ok(await page.locator(".sheet-mask").isVisible(), "点编辑后弹层没有消失");
       t.ok((await page.locator("#toast").innerText()).includes("当前计划"), "给出可读提示：" + (await page.locator("#toast").innerText()));
       t.eq(await page.locator(".wo-summary").count(), 0, "没有进入空白的训练页");
+    },
+  },
+
+  {
+    name: "history · 重复 id 单条操作",
+    async run(page, t, base) {
+      await page.goto(base, { waitUntil: "networkidle" });
+      // 两条 id 相同的记录（模拟手改 localStorage），日期与内容不同便于区分
+      await page.evaluate(() => {
+        localStorage.setItem("gym4.db.v1", JSON.stringify({ sessions: [
+          { id: "dup", dayId: "w1", date: "2026-10-16", durationMin: 30, maxPain: 0, rir: 2, note: "记录A",
+            moves: [{ name: "坐姿推胸机", sets: [{ weight: "80", reps: "8", done: true }] }] },
+          { id: "dup", dayId: "w2", date: "2026-10-17", durationMin: 50, maxPain: 0, rir: 2, note: "记录B",
+            moves: [{ name: "高位下拉", sets: [{ weight: "70", reps: "9", done: true }] }] },
+        ], drafts: {} }));
+      });
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(500);
+      await page.click('.nav-btn[data-tab="log"]');
+      await page.waitForTimeout(500);
+      t.eq(await page.locator("#view .row-tap").count(), 2, "重复 id 的两条记录都列出");
+
+      // 列表按日期降序：第 1 行是记录B(10/17)，第 2 行是记录A(10/16)
+      // 点第 2 行 → 详情必须是记录A（对象定位，不是 id 猜到的第一条）
+      await page.locator("#view .row-tap").nth(1).click();
+      await page.waitForTimeout(400);
+      const head = await page.locator("#sheetHeader .card-sub").innerText();
+      t.ok(head.includes("10/16"), "点第二行打开第二条的详情：" + head.trim());
+      t.ok((await page.locator("#sheetBody").innerText()).includes("记录A"), "详情内容是被点击的那条");
+
+      // 编辑记录A → 只有它被更新，记录B 保持原内容
+      await page.click('#sheetFooter button:has-text("编辑这条记录")');
+      await page.waitForTimeout(600);
+      await page.locator("#view input[type=number]").nth(0).fill("111");
+      await page.click("#woFinishBtn");
+      await page.waitForTimeout(700);
+      let recs = await page.evaluate(() => JSON.parse(localStorage.getItem("gym4.db.v1")).sessions);
+      t.eq(recs.length, 2, "编辑保存后仍是两条记录");
+      let byDate = Object.fromEntries(recs.map(s => [s.date, s]));
+      t.eq(byDate["2026-10-16"].moves[0].sets[0].weight, "111", "被编辑的那条已更新");
+      t.eq(byDate["2026-10-17"].moves[0].sets[0].weight, "70", "另一条保持原内容");
+
+      // 删除记录A → 记录B 不被误删
+      await page.locator("#view .row-tap").nth(1).click();
+      await page.waitForTimeout(400);
+      await page.click('#sheetFooter button:has-text("删除这条记录")');
+      await page.waitForTimeout(600);
+      recs = await page.evaluate(() => JSON.parse(localStorage.getItem("gym4.db.v1")).sessions);
+      t.eq(recs.length, 1, "删除一条后只剩一条");
+      t.eq(recs[0] && recs[0].date, "2026-10-17", "保留的是另一条，未被误删");
+      t.eq(recs[0] && recs[0].moves[0].sets[0].weight, "70", "保留的记录内容未变");
     },
   },
 
@@ -965,6 +1109,78 @@ const SUITES = [
   },
 
   {
+    name: "progress · 未来日期不进统计",
+    async run(page, t, base) {
+      await page.goto(base, { waitUntil: "networkidle" });
+      // 三条记录：3 天前、今天、7 天后（日期在页面内现算，用例不假设具体日期）
+      await page.evaluate(() => {
+        const z = n => String(n).padStart(2, "0");
+        const ds = off => { const d = new Date(); d.setDate(d.getDate() + off);
+          return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()); };
+        const mk = (id, date, w) => ({ id, dayId: "w1", date, durationMin: 30, maxPain: 0, rir: 2, note: "",
+          moves: [{ name: "坐姿推胸机", sets: [{ weight: String(w), reps: "10", done: true }] }] });
+        localStorage.setItem("gym4.db.v1", JSON.stringify({ sessions: [
+          mk("past", ds(-3), 80), mk("today", ds(0), 90), mk("future", ds(7), 999),
+        ], drafts: {} }));
+      });
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(400);
+      await page.click('.nav-btn[data-tab="progress"]');
+      await page.waitForTimeout(600);
+
+      const stats = await page.locator(".stat b").allInnerTexts();
+      t.eq(stats[1], "2", "累计训练不含未来日期记录：" + stats.join(" / "));
+      t.eq(stats[2], "1.7t", "累计容量只含过去与今天（未来 999×10 被排除）：" + stats[2]);
+
+      // 图表数据口径：countableSessions 过滤后再聚合，未来周不占槽位
+      const agg = await page.evaluate(async () => {
+        const m = await import("./js/progress.js");
+        const db = JSON.parse(localStorage.getItem("gym4.db.v1"));
+        const counted = m.countableSessions(db.sessions);
+        const weeks = m.aggregateByWeek(counted, 999);
+        return { counted: counted.length, sum: weeks.reduce((a, x) => a + x.value, 0) };
+      });
+      t.eq(agg.counted, 2, "countableSessions 过滤掉未来记录");
+      t.eq(agg.sum, 1700, "图表数据总容量只含过去与今天");
+
+      // 历史列表不受过滤影响，未来记录仍可查看
+      await page.click('.nav-btn[data-tab="log"]');
+      await page.waitForTimeout(500);
+      t.eq(await page.locator("#view .row-tap").count(), 3, "记录页历史列表仍显示未来日期的记录");
+
+      // 开始表单日期上限：max 是今天；程序化塞未来日期提交被拒
+      const maxInfo = await page.evaluate(() => {
+        const inp = document.querySelector("#view input[type=date]");
+        const z = n => String(n).padStart(2, "0");
+        const d = new Date();
+        return { max: inp && inp.max, today: d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()) };
+      });
+      t.eq(maxInfo.max, maxInfo.today, "开始表单日期输入的 max 是今天");
+      await page.evaluate(() => {
+        const inp = document.querySelector("#view input[type=date]");
+        const d = new Date(); d.setDate(d.getDate() + 1);
+        const z = n => String(n).padStart(2, "0");
+        inp.value = d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate());
+      });
+      await page.click("#view .btn.solid.full");
+      await page.waitForTimeout(500);
+      t.eq(await page.locator(".wo-summary").count(), 0, "未来日期不被提交，未进入训练页");
+      t.ok((await page.locator("#toast").innerText()).includes("不能晚于今天"), "给出可读提示");
+
+      // 补记过去的日期仍可用
+      await page.evaluate(() => {
+        const inp = document.querySelector("#view input[type=date]");
+        const d = new Date(); d.setDate(d.getDate() - 3);
+        const z = n => String(n).padStart(2, "0");
+        inp.value = d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate());
+      });
+      await page.click("#view .btn.solid.full");
+      await page.waitForTimeout(500);
+      t.eq(await page.locator(".wo-summary").count(), 1, "过去日期可以正常开始补记");
+    },
+  },
+
+  {
     name: "offline · 离线可用",
     async run(page, t, base) {
       await page.goto(base, { waitUntil: "networkidle" });
@@ -1007,6 +1223,46 @@ const SUITES = [
       t.eq(await page.locator(".hero h2").innerText().catch(() => "FAIL"), plan.name, "断网后仍能打开");
       t.eq(await page.locator(".daychip").count(), 7, "断网后周安排正常");
       await page.context().setOffline(false);
+    },
+  },
+
+  {
+    // scripts/serve.js 与本文件自带服务器的健壮性：畸形 URL 不打崩、路径穿越被拒
+    name: "devserver · 本地开发服务器",
+    async run(page, t, base) {
+      const { spawn } = require("child_process");
+      const httpRequest = require("http").request;
+      const get = (port, p) => new Promise(resolve => {
+        const req = httpRequest({ host: "127.0.0.1", port, path: p }, res => {
+          res.resume();
+          res.on("end", () => resolve(res.statusCode));
+        });
+        req.on("error", e => resolve("ERR:" + e.message.split(" ")[0]));
+        req.end();
+      });
+
+      // —— scripts/serve.js：非法 percent-encoding 返回 400，进程不退出 ——
+      const port = 9781 + (process.pid % 200);
+      const child = spawn("node", [path.join(ROOT, "scripts", "serve.js"), String(port)]);
+      let childExited = false;
+      child.on("exit", () => { childExited = true; });
+      await new Promise(r => setTimeout(r, 700));
+
+      t.eq(await get(port, "/%"), 400, "serve.js：非法编码路径返回 400");
+      t.ok(!childExited, "serve.js：畸形请求后进程没有退出");
+      t.eq(await get(port, "/index.html"), 200, "serve.js：畸形请求之后服务仍可用");
+      t.eq(await get(port, "/../" + path.basename(ROOT) + "-probe/x"), 403,
+        "serve.js：同前缀兄弟目录被 403 拒绝");
+      child.kill();
+
+      // —— 测试运行器自带服务器：同一目录边界与 400 行为 ——
+      const altPort = 10100 + (process.pid % 100);
+      const s2 = await serve(ROOT, altPort);
+      t.eq(await get(altPort, "/../" + path.basename(ROOT) + "-probe/x"), 403,
+        "测试服务器：同前缀兄弟目录被 403 拒绝");
+      t.eq(await get(altPort, "/%"), 400, "测试服务器：非法编码路径返回 400");
+      t.eq(await get(altPort, "/index.html"), 200, "测试服务器：正常文件可访问");
+      s2.close();
     },
   },
 ];
