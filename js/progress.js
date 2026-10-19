@@ -183,7 +183,9 @@ function roundRect(ctx, x, y, w, h, r) {
 let charts = [];
 
 export function drawBars(canvas, data, opt = {}) {
-  charts = charts.filter(c => c.canvas !== canvas);
+  // 只保留仍挂在页面上的图：旧 canvas 脱离 DOM 后若还被数组引用，
+  // 反复进出进度页会越攒越多（每次渲染都新建 canvas）
+  charts = charts.filter(c => c.canvas.isConnected && c.canvas !== canvas);
   charts.push({ canvas, data, opt });
   paintBars(canvas, data, opt);
 }
