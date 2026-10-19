@@ -164,8 +164,12 @@ export function loadDB() {
     const raw = localStorage.getItem(DB_KEY);
     if (!raw) return { sessions: [], drafts: {} };
     const d = JSON.parse(raw);
-    if (!d.sessions) d.sessions = [];
-    if (!d.drafts) d.drafts = {};
+    if (!d || typeof d !== "object" || Array.isArray(d)) return { sessions: [], drafts: {} };
+    // 容器类型不对（手改 localStorage、旧版遗留）时退化为空集合。
+    // 只判真值不够：db.sessions.filter / delete db.drafts[k] 遇到非数组、非对象
+    // 会直接抛错，把整页打崩。
+    if (!Array.isArray(d.sessions)) d.sessions = [];
+    if (!d.drafts || typeof d.drafts !== "object" || Array.isArray(d.drafts)) d.drafts = {};
     return d;
   } catch {
     return { sessions: [], drafts: {} };
@@ -197,12 +201,36 @@ export function validSessions() {
       && m.sets.every(x => x && typeof x === "object")));
 }
 
-// 草稿结构是否可用：缺 moves / sets 的草稿会让记录页和训练页崩
+// 草稿结构是否可用：缺 moves / sets 的草稿会让记录页和训练页崩。
+// 每个动作的 sets 必须是数组，sets 里的元素也必须是对象——消费端直接
+// m.sets.forEach 再读 x.done / x.weight，只查 moves 挡不住「sets 缺」和 sets:[null]。
 export function validDraft(dr) {
   return !!dr && typeof dr === "object" && !Array.isArray(dr)
     && typeof dr.dayId === "string" && typeof dr.date === "string"
     && Array.isArray(dr.moves)
-    && dr.moves.every(m => m && typeof m.name === "string" && Array.isArray(m.sets));
+    && dr.moves.every(m => m && typeof m.name === "string" && Array.isArray(m.sets)
+      && m.sets.every(x => x && typeof x === "object"));
+}
+
+// 草稿的唯一键：同一天同一训练日只有一份
+export const draftKey = (dayId, date) => dayId + "@" + date;
+
+// 草稿身份归一化：结构坏的直接剔除，键不唯一的搬到 dayId@date 规范键下。
+// 键不唯一会让「继续」打开空表单（getDraft 按规范键查不到）、让完成训练删不掉草稿
+// （finishWorkout 按 dr.key 删，删成了 drafts[undefined]），进而重复生成记录。
+export function normalizeDrafts() {
+  const out = {};
+  let changed = false;
+  Object.keys(db.drafts).forEach(k => {
+    const dr = db.drafts[k];
+    if (!validDraft(dr)) { changed = true; return; }
+    const nk = draftKey(dr.dayId, dr.date);
+    if (k !== nk || dr.key !== nk) changed = true;
+    dr.key = nk;
+    out[nk] = dr;
+  });
+  db.drafts = out;
+  return changed;
 }
 
 // 「有 N 条记录格式异常」告警卡：记录页与进度页共用

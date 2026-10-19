@@ -1,7 +1,7 @@
 /* 进度页：统计卡片、容量/疼痛图表、最佳组表、数据导入导出 */
 import {
   html, list, esc, el, fmtDate, parseDate, dateStr, db, saveDB, toast, today, storage, validSessions,
-  brokenCard
+  brokenCard, normalizeDrafts
 } from "./core.js";
 import { weekIndex } from "./plan.js";
 
@@ -350,6 +350,8 @@ export function importData() {
       const prev = { sessions: db.sessions, drafts: db.drafts };
       db.sessions = d.sessions;
       db.drafts = d.drafts || {};
+      // 导入的草稿键未必是 dayId@date（外部备份、手改），归一化后再落盘
+      normalizeDrafts();
       if (!saveDB()) {
         // 写盘失败就回滚，别让界面显示成导入成功
         db.sessions = prev.sessions;

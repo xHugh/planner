@@ -1,5 +1,5 @@
 /* 入口：路由、导航、初始化 */
-import { $, $$, requestPersist, toast, loadDB, db } from "./js/core.js";
+import { $, $$, requestPersist, toast, loadDB, db, normalizeDrafts } from "./js/core.js";
 import { renderPlan, setSessionCounter } from "./js/plan.js";
 import { renderLog, sessionsOfDay, state } from "./js/log.js";
 import { renderProgress } from "./js/progress.js";
@@ -62,6 +62,8 @@ window.addEventListener("storage", e => {
   const fresh = loadDB();
   db.sessions = fresh.sessions;
   db.drafts = fresh.drafts;
+  // 另一个标签页写来的草稿键未必规范，归一化后再渲染
+  normalizeDrafts();
   RENDERERS[TAB]();
 });
 
