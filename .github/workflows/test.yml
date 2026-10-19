@@ -1,0 +1,26 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # 仓库本身不引入 npm 依赖，playwright 仅测试用，--no-save 不产生 package.json
+      - name: 安装 playwright（仅测试用）
+        run: |
+          npm i --no-save playwright@1
+          npx playwright install --with-deps chromium
+
+      - name: 跑测试
+        run: node tests/run.js
