@@ -3,13 +3,27 @@
 ## 运行
 
 ```bash
-python3 -m http.server 8765
+node scripts/serve.js
 # 打开 http://127.0.0.1:8765/
 ```
 
-- 纯前端 PWA：原生 JS + ES Modules + 单个 `style.css`，**无构建、无依赖、无 `package.json`、无测试/lint/typecheck**。不要引入打包器或 npm 依赖。
+- 纯前端 PWA：原生 JS + ES Modules + 单个 `style.css`，**无构建、无依赖、无 `package.json`、无 lint/typecheck**。不要引入打包器或 npm 依赖到 App 本身。
 - 必须通过 HTTP 访问：`app.js` 是 module，`file://` 下 import 会被浏览器拦截；Service Worker 也只在 secure context（`localhost` 或 HTTPS）生效。README 里“可直接双击 `index.html`”的说法已过时。
-- 没有自动化验证，改完在浏览器手动走一遍：三个 tab、开始/续练/完成训练、刷新后数据仍在、JSON 导入导出、三态主题、断网加载。
+- `scripts/serve.js` 是零依赖的 Node 静态服务器（仅用内置模块）。`node scripts/serve.js --host` 会打印局域网地址供手机访问。
+- 有自动化验证：`node tests/run.js`（见下「测试」）。仓库不依赖 npm，脚本会到常见位置找本机已装的 `playwright`。改完仍建议在浏览器手动走一遍交互细节。
+
+## 测试
+
+```bash
+node tests/run.js              # 跑全部用例
+node tests/run.js flow         # 只跑名字含 "flow" 的用例
+node tests/run.js --url=http://127.0.0.1:8765   # 对已启动的服务跑
+```
+
+- 脚本自带静态服务器，不用先起 `node scripts/serve.js`。
+- 需要本机已有 `playwright` + chromium（仅开发用，App 本身零依赖），与 `scripts/render-icons.js` 同一约定。脚本会依次尝试 `playwright` / `playwright-core`，并在本仓库、`/tmp/pwtest`、`npm root -g` 等位置查找；找不到会给出安装提示并退出。
+- 覆盖：训练完整流程、旧数据兼容（逐动作字段迁移）、无障碍（触摸 ≥44px、对比度 ≥4.5:1、主题切换、无全局泄漏）、离线（SW 预缓存、断网加载）。每条用例还会检查 JS 报错与 4xx/5xx。
+- 退出码非 0 表示有失败，失败明细会打印在末尾。
 
 ## 结构
 
@@ -18,6 +32,8 @@ python3 -m http.server 8765
 - `js/plan.js`：计划页及计划/休息日 sheet；`js/log.js`：记录页与进行中的训练；`js/progress.js`：统计、Canvas 图表、导入导出。
 - `data.js`：训练计划唯一数据源，改计划只改这里（`PLAN.days`、`PLAN.week`）。
 - `index.html`：骨架、底部导航、sheet/workout dock/toast 容器；`style.css`：设计令牌、双主题（`<html data-theme="light|dark">`）、无障碍样式。
+- `scripts/serve.js`：本地静态服务器（零依赖）；`scripts/render-icons.js`：由 `app-icon.svg` 渲染各尺寸 PNG。
+- `tests/run.js`：自动化测试运行器（自带服务器，仅开发用）。
 
 ## 关键约束
 
@@ -28,7 +44,6 @@ python3 -m http.server 8765
 - **模块依赖环**：`log.js` 静态 import `plan.js`；反过来 `plan.js` 只能 `await import("./log.js")`，训练计数经 `app.js` 的 `setSessionCounter` 注入，避免循环依赖。
 - **双主题颜色**：颜色分别定义在 `:root` 和 `:root[data-theme="dark"]`；新增训练日或颜色两边都要加，`--card-top` 在深色主题必须覆盖，否则白字压白底。
 - **本地数据**：键名 `gym4.db.v1`（`sessions`/`drafts`）和 `gym4.theme`；无后端。改数据结构要考虑旧数据迁移（`log.js` 里有旧版草稿兼容代码）。
-- `README.md` 仍有过时内容（已删除的「器械」页、`app.js` 包含全部逻辑等），以代码和本文件为准。
 
 ## 图标
 
