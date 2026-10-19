@@ -105,10 +105,28 @@
 
 <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
+<div id="updateBar" class="update-bar hidden">
+  <span>发现新版本</span>
+  <button id="updateBtn" class="btn sm solid" type="button">立即更新</button>
+</div>
+
 <script type="module" src="app.js"></script>
 <script>
+document.getElementById('updateBtn').onclick = function () { location.reload(); };
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  navigator.serviceWorker.register('sw.js').then(function (reg) {
+    reg.addEventListener('updatefound', function () {
+      var sw = reg.installing;
+      if (!sw) return;
+      sw.addEventListener('statechange', function () {
+        // 已有 controller 说明这是「更新」而不是首次安装
+        if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+          var bar = document.getElementById('updateBar');
+          if (bar) bar.classList.remove('hidden');
+        }
+      });
+    });
+  }).catch(() => {});
 }
 </script>
 </body>
