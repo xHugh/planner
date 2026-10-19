@@ -108,6 +108,56 @@ const SEED = `
     mk("2026-10-17","w3","坐姿肩推机",45,10,0)],drafts:{}}));
 `;
 
+// 一年份的历史（260 条），用来检查图表在数据量变大后还能不能看
+const SEED_BIG = `
+  const names = ["坐姿推胸机","高位下拉","腿举机","绳索下压"];
+  const sessions = [];
+  for (let i = 0; i < 260; i++) {
+    const d = new Date(2025, 9, 1 + i * 1.38), z = n => String(n).padStart(2, "0");
+    sessions.push({id:"s"+i, dayId:"w1",
+      date: d.getFullYear()+"-"+z(d.getMonth()+1)+"-"+z(d.getDate()),
+      startedAt: Date.now(), durationMin:52, maxPain:0, rir:2, note:"",
+      moves: names.map(nm => ({name:nm, sets:[{weight:"80",reps:"9",done:true}]}))});
+  }
+  localStorage.setItem("gym4.db.v1", JSON.stringify({sessions, drafts:{}}));
+`;
+
+// ---------- 页面内跑的对比度扫描 ----------
+// 半透明背景要逐层合成，否则算出来的对比度是假的
+function contrastScan(selector) {
+  const srgb = c => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+  const lum = a => 0.2126 * srgb(a[0]) + 0.7152 * srgb(a[1]) + 0.0722 * srgb(a[2]);
+  const parse = v => {
+    const n = (String(v).match(/[-\d.]+/g) || []).map(Number);
+    return { rgb: n.slice(0, 3), a: n.length > 3 ? n[3] : 1 };
+  };
+  const over = (fg, bg) => fg.rgb.map((c, i) => c * fg.a + bg[i] * (1 - fg.a));
+  const bgOf = el => {
+    const stack = [];
+    let n = el;
+    while (n && n.nodeType === 1) {
+      const c = parse(getComputedStyle(n).backgroundColor);
+      if (c.a > 0) stack.push(c);
+      n = n.parentElement;
+    }
+    let bg = [255, 255, 255];
+    for (let i = stack.length - 1; i >= 0; i--) bg = over(stack[i], bg);
+    return bg;
+  };
+  const out = [];
+  document.querySelectorAll(selector).forEach(el => {
+    if (!el.textContent.trim()) return;
+    const st = getComputedStyle(el);
+    const size = parseFloat(st.fontSize), weight = +st.fontWeight || 400;
+    const fg = parse(st.color);
+    const [hi, lo] = [lum(fg.rgb), lum(bgOf(el))].sort((a, b) => b - a);
+    const r = (hi + 0.05) / (lo + 0.05);
+    const need = (size >= 18.66 || (size >= 14 && weight >= 700)) ? 3 : 4.5;
+    if (r < need) out.push(`${el.className.split(" ")[0]} ${r.toFixed(2)}<${need}`);
+  });
+  return out;
+}
+
 // ---------- 用例 ----------
 const SUITES = [
   {
@@ -174,6 +224,64 @@ const SUITES = [
   },
 
   {
+    name: "draft · 草稿不会被覆盖",
+    async run(page, t, base) {
+      await page.goto(base, { waitUntil: "networkidle" });
+      await page.evaluate(() => localStorage.clear());
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(400);
+
+      const today = await page.evaluate(() => {
+        const d = new Date(), z = n => String(n).padStart(2, "0");
+        return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate());
+      });
+      // 造一份「已勾选 1 组 + 有备注」的当天草稿
+      await page.evaluate((d) => {
+        localStorage.setItem("gym4.db.v1", JSON.stringify({ sessions: [], drafts: {
+          ["w1@" + d]: {
+            key: "w1@" + d, dayId: "w1", date: d, startedAt: Date.now() - 6e5, touched: true,
+            moves: [{ index: 0, name: "坐姿推胸机", sets: [{ weight: "80", reps: "9", done: true }] }],
+            rir: 2, pain: 0, note: "我的草稿备注",
+          },
+        }}));
+      }, today);
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(500);
+
+      // 从计划页点「开始今天」——以前这里会把草稿冲掉
+      await page.click(".hero .btn.primary");
+      await page.waitForTimeout(700);
+      const dr = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem("gym4.db.v1")).drafts)[0]);
+      t.ok(dr, "草稿还在");
+      t.eq(dr && dr.moves[0].sets[0].done, true, "已勾选的组没有被清空");
+      t.eq(dr && dr.moves[0].sets[0].weight, "80", "已填的重量没有被清空");
+      t.eq(dr && dr.note, "我的草稿备注", "备注没有被清空");
+
+      // 记录页里能看到并能放弃
+      await page.click("#woExitBtn");
+      await page.waitForTimeout(600);
+      await page.click('.nav-btn[data-tab="log"]');
+      await page.waitForTimeout(500);
+      t.eq(await page.locator(".row-drop").count(), 1, "草稿行有「放弃」按钮");
+      await page.click(".row-drop");
+      await page.waitForTimeout(600);
+      const left = await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("gym4.db.v1")).drafts).length);
+      t.eq(left, 0, "放弃后草稿被删除");
+
+      // 开了训练什么都没动就退出 → 不留僵尸草稿
+      await page.click('.nav-btn[data-tab="plan"]');
+      await page.waitForTimeout(400);
+      await page.click(".hero .btn.primary");
+      await page.waitForTimeout(600);
+      await page.click("#woExitBtn");
+      await page.waitForTimeout(600);
+      await page.click('.nav-btn[data-tab="log"]');
+      await page.waitForTimeout(500);
+      t.eq(await page.locator(".row-drop").count(), 0, "空草稿不留在「未完成的训练」里");
+    },
+  },
+
+  {
     name: "data · 旧数据兼容",
     async run(page, t, base) {
       await page.goto(base, { waitUntil: "networkidle" });
@@ -217,6 +325,109 @@ const SUITES = [
   },
 
   {
+    name: "workout · 训练中与编辑",
+    async run(page, t, base) {
+      await page.goto(base, { waitUntil: "networkidle" });
+      await page.evaluate(() => localStorage.clear());
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(400);
+
+      await page.click(".hero .btn.primary");
+      await page.waitForTimeout(600);
+
+      // 底栏常驻进度
+      t.eq(await page.locator("#woDockCount").innerText(), "已完成 0/21 组", "底栏初始显示完成数");
+      await page.locator("#view .check").nth(0).click();
+      await page.waitForTimeout(300);
+      t.ok((await page.locator("#woDockCount").innerText()).includes("1/"), "勾选后底栏完成数更新");
+      const w = await page.evaluate(() => document.getElementById("woDockFill").style.width);
+      t.ok(w && w !== "0%", "底栏进度条有宽度：" + w);
+      t.ok(/^\d{2}:\d{2}$/.test(await page.locator("#woDockTimer").innerText()), "底栏有计时");
+
+      // 后台不计时长
+      const t0 = await page.locator("#woDockTimer").innerText();
+      await page.evaluate(() => {
+        Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      await page.waitForTimeout(2200);
+      const t1 = await page.locator("#woDockTimer").innerText();
+      await page.evaluate(() => {
+        Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      await page.waitForTimeout(1200);
+      const t2 = await page.locator("#woDockTimer").innerText();
+      t.eq(t0, t1, "切到后台 2 秒后计时不变");
+      t.ok(t1 !== t2, "回到前台后计时继续");
+
+      // 完成 → 编辑 → 保存
+      await page.click("#woFinishBtn");
+      await page.waitForTimeout(700);
+      await page.click('.nav-btn[data-tab="log"]');
+      await page.waitForTimeout(500);
+      await page.locator("#view .row-tap").first().click();
+      await page.waitForTimeout(500);
+      t.ok(await page.locator('#sheetFooter button:has-text("编辑这条记录")').count() === 1, "详情弹层有编辑按钮");
+      await page.click('#sheetFooter button:has-text("编辑这条记录")');
+      await page.waitForTimeout(700);
+      t.eq(await page.locator("#woFinishBtn").innerText(), "保存修改", "编辑时主按钮变为「保存修改」");
+      t.eq(await page.locator(".wo-move").count(), 7, "编辑界面列出全部动作");
+      await page.locator("#view input[type=number]").nth(0).fill("123");
+      await page.click("#woFinishBtn");
+      await page.waitForTimeout(800);
+      const s = await page.evaluate(() => JSON.parse(localStorage.getItem("gym4.db.v1")).sessions);
+      t.eq(s.length, 1, "编辑后没有多出第二条记录");
+      t.eq(s[0] && s[0].moves[0].sets[0].weight, "123", "修改已写回");
+      t.eq(s[0] && s[0].moves[0].sets[0].done, true, "已完成状态保留");
+    },
+  },
+
+  {
+    name: "data · 导入校验与容错",
+    async run(page, t, base) {
+      await page.goto(base, { waitUntil: "networkidle" });
+
+      const v = await page.evaluate(async () => {
+        const m = await import("/js/progress.js");
+        const good = { sessions: [{ id: "a", date: "2026-01-01", dayId: "w1",
+          moves: [{ name: "坐姿推胸机", sets: [{ weight: "80", reps: "9", done: true }] }] }] };
+        return {
+          ok: m.validateDB(good),
+          noMoves: m.validateDB({ sessions: [{ id: "a", date: "2026-01-01", dayId: "w1" }] }),
+          badDate: m.validateDB({ sessions: [{ id: "a", date: "x", dayId: "w1", moves: [] }] }),
+          noSets: m.validateDB({ sessions: [{ id: "a", date: "2026-01-01", moves: [{ name: "x" }] }] }),
+          noId: m.validateDB({ sessions: [{ date: "2026-01-01", moves: [] }] }),
+          notArray: m.validateDB({ sessions: {} }),
+        };
+      });
+      t.eq(v.ok, null, "合法数据通过校验");
+      t.ok(v.noMoves && v.noMoves.includes("moves"), "缺 moves 被拒：" + v.noMoves);
+      t.ok(v.badDate && v.badDate.includes("日期"), "坏日期被拒：" + v.badDate);
+      t.ok(v.noSets && v.noSets.includes("sets"), "缺 sets 被拒：" + v.noSets);
+      t.ok(v.noId && v.noId.includes("id"), "缺 id 被拒：" + v.noId);
+      t.ok(v.notArray && v.notArray.includes("sessions"), "sessions 不是数组被拒：" + v.notArray);
+
+      // 坏数据落盘后，进度页不能整页崩
+      await page.evaluate(() => {
+        localStorage.setItem("gym4.db.v1", JSON.stringify({
+          sessions: [
+            { id: "bad", dayId: "w1", date: "2026-10-16", durationMin: 52, maxPain: 0, rir: 2, note: "" },
+            { id: "ok", dayId: "w1", date: "2026-10-17", durationMin: 52, maxPain: 0, rir: 2, note: "",
+              moves: [{ name: "坐姿推胸机", sets: [{ weight: "80", reps: "9", done: true }] }] },
+          ], drafts: {},
+        }));
+      });
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(500);
+      await page.click('.nav-btn[data-tab="progress"]');
+      await page.waitForTimeout(600);
+      t.ok(await page.locator(".stat").count() >= 3, "残缺记录不影响统计渲染");
+      t.ok((await page.locator("#view").innerText()).includes("格式异常"), "残缺记录有提示");
+    },
+  },
+
+  {
     name: "a11y · 无障碍",
     async run(page, t, base) {
       for (const scheme of ["light", "dark"]) {
@@ -229,7 +440,7 @@ const SUITES = [
         // 触摸目标 ≥44px
         const small = await page.evaluate(() => {
           const out = [];
-          document.querySelectorAll('.check, .nav-btn, .daychip, .pick, .btn, .row-tap').forEach(el => {
+          document.querySelectorAll('.check, .nav-btn, .daychip, .pick, .btn, .row-tap, .row-drop').forEach(el => {
             const r = el.getBoundingClientRect();
             if (r.width > 0 && (r.width < 44 || r.height < 44)) {
               out.push(`${el.className.split(" ")[0]} ${Math.round(r.width)}x${Math.round(r.height)}`);
@@ -239,33 +450,20 @@ const SUITES = [
         });
         t.ok(small.length === 0, `[${scheme}] 触摸目标均 ≥44px${small.length ? ": " + small.join(", ") : ""}`);
 
-        // 文字对比度 ≥4.5:1
-        const lowContrast = await page.evaluate(() => {
-          const srgb = c => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
-          const lum = a => 0.2126 * srgb(a[0]) + 0.7152 * srgb(a[1]) + 0.0722 * srgb(a[2]);
-          const parse = v => (String(v).match(/[\d.]+/g) || [0, 0, 0]).slice(0, 3).map(Number);
-          const bgOf = el => {
-            let n = el;
-            while (n) {
-              const c = getComputedStyle(n).backgroundColor;
-              if (c && !c.includes("rgba(0, 0, 0, 0)") && !c.includes("transparent")) return parse(c);
-              n = n.parentElement;
-            }
-            return [255, 255, 255];
-          };
-          const out = [];
-          document.querySelectorAll(".move-tip, .card-sub, .row-sub, .stat span, .section-h, .move-meta, .set-head, .prev, .field-label, .card-title, .row-title").forEach(el => {
-            if (!el.textContent.trim()) return;
-            const st = getComputedStyle(el);
-            const size = parseFloat(st.fontSize), weight = +st.fontWeight || 400;
-            const [hi, lo] = [lum(parse(st.color)), lum(bgOf(el))].sort((a, b) => b - a);
-            const r = (hi + 0.05) / (lo + 0.05);
-            const need = (size >= 18.66 || (size >= 14 && weight >= 700)) ? 3 : 4.5;
-            if (r < need) out.push(`${el.className.split(" ")[0]} ${r.toFixed(2)}<${need}`);
-          });
-          return out;
-        });
+        // 文字对比度 ≥4.5:1（含此前漏检的嵌套 span 与告警卡）
+        const sel = ".move-tip, .card-sub, .row-sub, .stat span, .section-h, .move-meta, .set-head, .prev, .field-label, .card-title, .row-title, .text-danger-strong, .card-warn .card-sub, .card-warn .card-title";
+        const lowContrast = await page.evaluate(contrastScan, sel);
         t.ok(lowContrast.length === 0, `[${scheme}] 文字对比度达标${lowContrast.length ? ": " + lowContrast.join(", ") : ""}`);
+
+        // 进度页同样要过（告警卡在深色主题下曾经是白底浅字）
+        await page.click('.nav-btn[data-tab="progress"]');
+        await page.waitForTimeout(600);
+        const lowContrast2 = await page.evaluate(contrastScan, sel);
+        t.ok(lowContrast2.length === 0, `[${scheme}] 进度页文字对比度达标${lowContrast2.length ? ": " + lowContrast2.join(", ") : ""}`);
+        t.ok(await page.locator(".card-warn").count() >= 1, `[${scheme}] 疼痛告警卡存在`);
+
+        // 导航语义
+        t.eq(await page.getAttribute(".nav-btn.active", "aria-current"), "page", `[${scheme}] 当前页有 aria-current`);
 
         // 主题切换可用
         await page.click("#themeBtn");
@@ -276,6 +474,77 @@ const SUITES = [
         // 无全局污染
         t.eq(await page.evaluate(() => typeof window.PLAN), "undefined", `[${scheme}] 无 window 全局泄漏`);
       }
+
+      // 训练中的读屏播报
+      await page.goto(base, { waitUntil: "networkidle" });
+      await page.evaluate(() => localStorage.clear());
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(400);
+      t.eq(await page.getAttribute("#toast", "role"), "status", "toast 有 role=status");
+      await page.click(".hero .btn.primary");
+      await page.waitForTimeout(600);
+      t.eq(await page.getAttribute("#woSub", "aria-live"), "polite", "训练进度有 aria-live");
+      t.ok((await page.getAttribute(".ring", "aria-label") || "").includes("组"), "进度环有可读标签");
+      await page.locator("#view .check").nth(0).click();
+      await page.waitForTimeout(300);
+      t.ok((await page.getAttribute(".ring", "aria-label") || "").includes("1"), "勾选后读屏标签更新");
+    },
+  },
+
+  {
+    name: "chart · 数据多时仍可读",
+    async run(page, t, base) {
+      await page.goto(base, { waitUntil: "networkidle" });
+      await page.evaluate(SEED_BIG);
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(500);
+      await page.click('.nav-btn[data-tab="progress"]');
+      await page.waitForTimeout(900);
+
+      const agg = await page.evaluate(async () => {
+        const m = await import("/js/progress.js");
+        const db = JSON.parse(localStorage.getItem("gym4.db.v1"));
+        const all = m.aggregateByWeek(db.sessions, 999);
+        const shown = m.aggregateByWeek(db.sessions, 12);
+        const total = db.sessions.reduce((a, s) => a + s.moves.reduce((b, mv) =>
+          b + mv.sets.reduce((c, st) => c + (st.done ? (+st.weight || 0) * (+st.reps || 0) : 0), 0), 0), 0);
+        return {
+          allWeeks: all.length, shownWeeks: shown.length,
+          allSum: all.reduce((a, x) => a + x.value, 0), total,
+          canvases: document.querySelectorAll("canvas").length,
+        };
+      });
+      t.ok(agg.allWeeks > 12, `一年数据摊成 ${agg.allWeeks} 周`);
+      t.ok(agg.shownWeeks <= 12, `容量图只画 ${agg.shownWeeks} 周（≤12）`);
+      t.eq(agg.allSum, agg.total, "按周聚合后总容量守恒");
+      t.eq(agg.canvases, 2, "进度页两张图");
+
+      // 柱宽不能窄到看不见
+      const geo = await page.evaluate(() => {
+        const c = document.querySelector("canvas");
+        const W = c.clientWidth, padL = 34, cw = W - padL - 12;
+        const n = 12;                       // 上限
+        return { W, cw: +cw.toFixed(1), bw: +Math.max(3, Math.min(40, (cw / n) * 0.55)).toFixed(2) };
+      });
+      t.ok(geo.bw >= 3, `柱宽 ${geo.bw}px ≥ 3px`);
+
+      // 深色主题下不能再出现整条近白网格线
+      await page.evaluate(() => localStorage.setItem("gym4.theme", "dark"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(500);
+      await page.click('.nav-btn[data-tab="progress"]');
+      await page.waitForTimeout(800);
+      const bright = await page.evaluate(() => {
+        let n = 0;
+        document.querySelectorAll("canvas").forEach(c => {
+          const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+          for (let i = 0; i < d.length; i += 4) {
+            if (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2] > 220) n++;
+          }
+        });
+        return n;
+      });
+      t.ok(bright < 100, `深色主题下 canvas 近白像素 ${bright} 个（网格线已改用主题色）`);
     },
   },
 
@@ -299,6 +568,21 @@ const SUITES = [
         t.ok(cached.some(p => p.endsWith(need)), `缓存含 ${need}`);
       }
       t.ok(!cached.some(p => p.includes("/img/")), "已移除的图片不在缓存中");
+
+      // 预缓存清单要覆盖所有运行时文件，新增文件漏加会在这里暴露
+      const swSrc = await page.evaluate(async () => (await fetch("sw.js")).text());
+      const assets = (swSrc.match(/var ASSETS = \[([\s\S]*?)\];/) || [, ""])[1]
+        .split(",").map(s => s.trim().replace(/^"|"$/g, "")).filter(Boolean);
+      const runtime = await page.evaluate(async () => {
+        const list = ["/", "/index.html", "/style.css", "/data.js", "/app.js", "/manifest.json",
+          "/js/core.js", "/js/plan.js", "/js/log.js", "/js/progress.js"];
+        for (const f of ["fonts/barlow-condensed-600.woff2", "fonts/barlow-condensed-700.woff2",
+          "icons/icon-192.png", "icons/icon-512.png", "icons/icon-512-maskable.png",
+          "icons/apple-touch-icon.png", "icons/app-icon.svg"]) list.push("/" + f);
+        return list;
+      });
+      const missing = runtime.filter(f => !assets.some(a => a === "." + f || a === "." + f.replace(/\/$/, "/")));
+      t.eq(missing.length, 0, `预缓存清单覆盖全部运行时文件${missing.length ? "，漏了 " + missing.join(", ") : ""}`);
 
       await page.context().setOffline(true);
       await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
