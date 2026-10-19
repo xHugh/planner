@@ -94,7 +94,11 @@ node tests/run.js flow     # 只跑名字含 "flow" 的用例
 
 需要本机已有 `playwright` + chromium（仅开发用），与 `scripts/render-icons.js` 同一约定；仓库本身不依赖 npm。
 
-GitHub Actions 会在每次 push 到 `main` 和每次 PR 上自动跑同一套用例（workflow 里临时装 playwright，仓库不产生 `package.json`）。
+GitHub Actions 会在每次 push 到 `main` 和每次 PR 上自动跑同一套用例（workflow 里临时装 playwright，仓库不产生 `package.json`）。跑挂了也不用登录 Actions 看日志，输出会推到 `ci-debug` 分支：
+
+```bash
+curl -s https://raw.githubusercontent.com/xHugh/planner/ci-debug/test-output.txt | tail -40
+```
 
 ## 修改训练计划
 
