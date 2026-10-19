@@ -914,7 +914,7 @@ body.in-workout .navbar {
   display: none !important;
 }
 body.in-workout #app {
-  padding-bottom: calc(96px + var(--safe-b));
+  padding-bottom: calc(132px + var(--safe-b));
 }
 .workout-dock {
   position: fixed;
@@ -925,8 +925,9 @@ body.in-workout #app {
   max-width: 560px;
   z-index: 35;
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
   padding: 10px 16px calc(14px + var(--safe-b));
   background: var(--glass);
   backdrop-filter: saturate(180%) blur(24px);
@@ -937,6 +938,37 @@ body.in-workout #app {
 .workout-dock.hidden {
   display: none !important;
 }
+
+/* 底栏常驻进度：滚动到最后一个动作时也能看到完成度与计时 */
+.wo-dock-bar { display: flex; flex-direction: column; gap: 6px; }
+.wo-dock-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--fill);
+  overflow: hidden;
+}
+.wo-dock-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--brand-1), var(--brand-2));
+  transition: width .35s cubic-bezier(.4, 0, .2, 1);
+}
+.wo-dock-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.wo-dock-timer {
+  font-family: var(--font-num);
+  font-size: 15px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.wo-dock-actions { display: flex; align-items: center; gap: 12px; }
 .workout-dock #woExitBtn {
   flex: 1;
   padding: 13px 10px;
@@ -1123,3 +1155,4 @@ main > *:nth-child(n+6) { animation-delay: .22s; }
 .row-drop:active { background: var(--fill); transform: scale(.94); }
 
 /* ---------- 弹层底部多按钮 ---------- */
+.sheet-actions { display: flex; flex-direction: column; gap: 10px; }

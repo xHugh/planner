@@ -90,8 +90,17 @@
 </div>
 
 <div id="workoutDock" class="workout-dock hidden">
-  <button id="woExitBtn" class="btn outline" type="button">保存并退出</button>
-  <button id="woFinishBtn" class="btn solid" type="button">完成训练</button>
+  <div class="wo-dock-bar">
+    <div class="wo-dock-track"><div id="woDockFill" class="wo-dock-fill"></div></div>
+    <div class="wo-dock-meta">
+      <span id="woDockCount">已完成 0/0 组</span>
+      <span id="woDockTimer" class="wo-dock-timer">--:--</span>
+    </div>
+  </div>
+  <div class="wo-dock-actions">
+    <button id="woExitBtn" class="btn outline" type="button">保存并退出</button>
+    <button id="woFinishBtn" class="btn solid" type="button">完成训练</button>
+  </div>
 </div>
 
 <div id="toast" class="toast hidden"></div>

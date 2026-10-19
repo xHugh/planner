@@ -218,6 +218,12 @@ export function showSessionSheet(id) {
     body += "</div>";
   });
 
+  const foot = el("div", "sheet-actions");
+  const editBtn = el("button", "btn solid full", "编辑这条记录");
+  editBtn.onclick = () => {
+    closeSheet();
+    openWorkout(s.dayId, s.date, { session: s });
+  };
   const delBtn = el("button", "btn danger full", "删除这条记录");
   delBtn.onclick = () => {
     if (!confirm(`删除 ${fmtDate(s.date)} 的这条训练记录？此操作不可撤销。`)) return;
@@ -227,8 +233,9 @@ export function showSessionSheet(id) {
     renderLog($("#view"), $("#appbarSub"));
     toast("已删除");
   };
+  foot.append(editBtn, delBtn);
 
-  setSheet(headerHtml, body, delBtn);
+  setSheet(headerHtml, body, foot);
 }
 
 /* ---------------- 训练进行中 ---------------- */
@@ -237,6 +244,9 @@ export const state = { wo: null };
 const workoutDock = document.getElementById("workoutDock");
 const woExitBtn = document.getElementById("woExitBtn");
 const woFinishBtn = document.getElementById("woFinishBtn");
+const woDockFill = document.getElementById("woDockFill");
+const woDockCount = document.getElementById("woDockCount");
+const woDockTimer = document.getElementById("woDockTimer");
 
 function setWorkoutMode(on) {
   document.body.classList.toggle("in-workout", !!on);
@@ -268,6 +278,7 @@ function tickTimer() {
   const txt = fmtElapsed(elapsedOf(wo.draft));
   const t = $("#timer");
   if (t) t.textContent = txt;
+  if (woDockTimer) woDockTimer.textContent = txt;
 }
 function startTimer() {
   stopTimer();
@@ -296,15 +307,58 @@ function ringSvg(done, total) {
       <div class="lbl">${pct}%</div></div>`;
 }
 
-export function openWorkout(dayId, date) {
+export function openWorkout(dayId, date, opts) {
   const d = dayById(dayId);
   if (!d) return;
-  const draft = getDraft(dayId, date);
-  if (!draft.startedAt) draft.startedAt = Date.now();
-  if (draft.elapsedMs == null) draft.elapsedMs = Math.max(0, Date.now() - draft.startedAt);
+  const o = opts || {};
+  let draft, editingId = null;
+
+  if (o.session) {
+    // 编辑已完成的记录：草稿只存在内存，保存前不落盘
+    const s = o.session;
+    editingId = s.id;
+    const recorded = new Map((s.moves || []).map(m => [m.name, m]));
+    const moves = [];
+    d.moves.forEach(m => {
+      const rec = recorded.get(m.name);
+      recorded.delete(m.name);
+      const sets = [];
+      const n = Math.max(m.sets, rec ? rec.sets.length : 0);
+      for (let i = 0; i < n; i++) {
+        const rs = rec ? rec.sets[i] : null;
+        sets.push({
+          weight: rs && rs.weight != null ? rs.weight : "",
+          reps: rs && rs.reps != null ? rs.reps : "",
+          done: rs ? !!rs.done : false,
+        });
+      }
+      moves.push({ index: moves.length, name: m.name, sets });
+    });
+    // 计划里已删掉、但历史里还留着的动作：照样可见可改，不丢数据
+    recorded.forEach(rec => {
+      moves.push({
+        index: moves.length, name: rec.name,
+        sets: (rec.sets || []).map(s => ({
+          weight: s.weight != null ? s.weight : "",
+          reps: s.reps != null ? s.reps : "",
+          done: !!s.done,
+        })),
+      });
+    });
+    draft = {
+      key: "edit:" + s.id, dayId, date, startedAt: s.startedAt || Date.now(),
+      elapsedMs: (s.durationMin || 0) * 60000, lastResumedAt: null, touched: true,
+      moves, rir: s.rir ?? 2, pain: s.maxPain ?? 0, note: s.note || "",
+    };
+  } else {
+    draft = getDraft(dayId, date);
+    if (!draft.startedAt) draft.startedAt = Date.now();
+    if (draft.elapsedMs == null) draft.elapsedMs = Math.max(0, Date.now() - draft.startedAt);
+    if (draft.touched == null) draft.touched = true;
+  }
   resumeClock(draft);
-  saveDB();
-  state.wo = { draft, timerId: null };
+  if (!editingId) saveDB();
+  state.wo = { draft, timerId: null, editingId };
   setWorkoutMode(true);
   renderWorkout(d);
   window.scrollTo({ top: 0 });
@@ -364,9 +418,24 @@ export function renderWorkout(d) {
   head.appendChild(note);
   view.appendChild(head);
 
+  // 计划里的动作 + 历史里还留着但计划已删的动作，合并成一份渲染列表
+  const renderList = [];
+  const used = new Set();
   d.moves.forEach((m, mi) => {
     const st = findMove(dr, m.name);
     if (!st) return;
+    used.add(m.name);
+    renderList.push({ plan: m, st, badge: mi + 1 });
+  });
+  dr.moves.forEach((st) => {
+    if (used.has(st.name)) return;
+    renderList.push({
+      plan: { name: st.name, sets: st.sets.length, lo: 0, hi: 0, repsHint: "?" },
+      st, badge: renderList.length + 1, extra: true,
+    });
+  });
+
+  renderList.forEach(({ plan: m, st, badge, extra }) => {
     const card = el("div", "card wo-move");
     const prev = lastEntry(m.name, dr.date);
     const prevWeights = prev && prev.move.sets.filter(x => x.weight);
@@ -375,12 +444,15 @@ export function renderWorkout(d) {
         prevWeights.slice(0, 3).map(x => `${x.weight}kg×${x.reps || "?"}`).join(" / ")
       : "";
 
-    const thumb = moveBadge(mi + 1);
+    const thumb = moveBadge(badge);
+    const target = extra
+      ? `历史记录 · ${m.sets} 组`
+      : `目标 ${m.sets} 组 × ${m.lo === m.hi ? m.lo : m.lo + "-" + m.hi}${m.cardio ? " 分钟" : " 次"}`;
     card.innerHTML = html`
       <div class="move move-flat">
         <div class="move-body">
           <div class="move-name">${esc(m.name)}</div>
-          <div class="move-meta">目标 ${m.sets} 组 × ${m.lo === m.hi ? m.lo : m.lo + "-" + m.hi}${m.cardio ? " 分钟" : " 次"}
+          <div class="move-meta">${target}
             ${prevTxt ? ` · <span class="prev">${esc(prevTxt)}</span>` : ""}</div>
         </div></div>`;
     card.querySelector(".move").insertBefore(thumb, card.querySelector(".move-body"));
@@ -393,7 +465,7 @@ export function renderWorkout(d) {
       card.appendChild(setRow(m, s, si,
         () => {
           s.done = !s.done;
-          if (s.done && !s.reps ) s.reps = m.lo;
+          if (s.done && !s.reps && !extra) s.reps = m.lo;
           dr.touched = true;
           saveDB();
         },
@@ -424,21 +496,29 @@ export function renderWorkout(d) {
     const c = countDone(dr);
     const sub = $("#woSub");
     if (sub) sub.textContent = `${dr.date} · 已完成 ${c.done}/${c.total} 组`;
+    const pct = c.total ? Math.round((c.done / c.total) * 100) : 0;
     const ring = head.querySelector(".ring");
     if (ring) {
-      const pct = c.total ? Math.round((c.done / c.total) * 100) : 0;
       const C = 2 * Math.PI * 23;
       const fg = ring.querySelector("svg circle:last-child");
       if (fg) fg.setAttribute("stroke-dashoffset", (C * (1 - pct / 100)).toFixed(1));
       ring.querySelector(".lbl").textContent = pct + "%";
     }
+    if (woDockCount) woDockCount.textContent = `已完成 ${c.done}/${c.total} 组`;
+    if (woDockFill) woDockFill.style.width = pct + "%";
     return c.done;
   };
   counter();
   wo.counter = counter;
 
+  woFinishBtn.textContent = wo.editingId ? "保存修改" : "完成训练";
+  woExitBtn.textContent = wo.editingId ? "放弃修改" : "保存并退出";
   woFinishBtn.onclick = () => finishWorkout(d);
-  woExitBtn.onclick = () => { closeWorkout(true); toast("已保存草稿"); };
+  woExitBtn.onclick = () => {
+    if (wo.editingId) { closeWorkout(false); toast("已放弃修改"); return; }
+    closeWorkout(true);
+    toast("已保存草稿");
+  };
 }
 
 // 文档级委托：勾选或点击完成训练时刷新头部进度条与圆环
@@ -459,6 +539,28 @@ export function finishWorkout(d) {
     name: m.name,
     sets: m.sets.map(s => ({ weight: s.weight, reps: s.reps, done: !!s.done })),
   }));
+
+  if (wo.editingId) {
+    // 编辑模式：覆盖原记录，id 与时长保持不变
+    if (!confirm(`保存修改？将更新 ${fmtDate(dr.date)} 的这条记录。`)) return;
+    const idx = db.sessions.findIndex(x => x.id === wo.editingId);
+    if (idx >= 0) {
+      db.sessions[idx] = {
+        ...db.sessions[idx],
+        date: dr.date, moves,
+        rir: dr.rir ?? 2,
+        maxPain: Math.max(dr.pain || 0, legacyPain),
+        note: dr.note || "",
+      };
+    }
+    saveDB();
+    stopTimer();
+    state.wo = null;
+    setWorkoutMode(false);
+    toast("已更新");
+    renderLog($("#view"), $("#appbarSub"));
+    return;
+  }
 
   if (!confirm(`完成这次训练？已完成 ${c.done}/${c.total} 组`)) return;
 
