@@ -63,7 +63,7 @@ export function setRow(move, s, si, onToggle, onInput) {
 
   const reps = el("input");
   reps.type = "number"; reps.inputMode = "numeric";
-  reps.placeholder = move.lo === move.hi ? String(move.lo) : move.lo + "-" + move.hi;
+  reps.placeholder = move.repsHint || (move.lo === move.hi ? String(move.lo) : move.lo + "-" + move.hi);
   reps.value = s.reps;
   reps.setAttribute("aria-label", `第 ${si + 1} 组次数`);
   reps.oninput = () => onInput("reps", reps.value);
@@ -184,6 +184,26 @@ export function saveDB() {
   } catch {
     toast("存储失败：浏览器空间不足");
   }
+}
+
+/* ---------------- 持久化存储 ----------------
+   申请后浏览器不会在磁盘紧张时清掉本机数据（iOS 尤其重要）。 */
+export const storage = { persisted: null };
+const PERSIST_KEY = "gym4.persist.v1";
+
+export function requestPersist() {
+  if (storage.persisted !== null) return;
+  try {
+    if (!navigator.storage || !navigator.storage.persisted) return;
+    navigator.storage.persisted().then(async p => {
+      if (!p && navigator.storage.persist) {
+        p = await navigator.storage.persist();
+        try { localStorage.setItem(PERSIST_KEY, p ? "1" : "0"); } catch {}
+      }
+      storage.persisted = p;
+      document.dispatchEvent(new CustomEvent("persistchange"));
+    }).catch(() => {});
+  } catch {}
 }
 
 /* ---------------- Sheet 三段式 ---------------- */

@@ -1,6 +1,6 @@
 /* 进度页：统计卡片、容量/疼痛图表、最佳组表、数据导入导出 */
 import {
-  html, list, esc, el, fmtDate, parseDate, dateStr, db, saveDB, toast, today
+  html, list, esc, el, fmtDate, parseDate, dateStr, db, saveDB, toast, today, storage
 } from "./core.js";
 import { weekIndex } from "./plan.js";
 
@@ -128,6 +128,24 @@ export function renderProgress(view, subEl) {
     view.appendChild(wa);
   }
 
+  // 存储提醒：浏览器可能在长期不用时清掉本地数据
+  const needBackup = shouldHintBackup();
+  if (storage.persisted === false || needBackup) {
+    const ps = el("div", "card card-warn");
+    const title = storage.persisted === false ? "💾 建议定期导出备份" : "💾 记录已经不少了";
+    const sub = storage.persisted === false
+      ? "当前浏览器未授予持久化存储，长期不使用可能清除本机记录。导出 JSON 存一份到网盘更保险。"
+      : "导出一份 JSON 备份，换设备或清缓存都不怕。";
+    ps.innerHTML = html`
+      <div class="card-title card-title-danger">${title}</div>
+      <p class="card-sub">${sub}</p>`;
+    const pe = el("button", "btn outline full", "⬇ 导出备份");
+    pe.style.marginTop = "10px";
+    pe.onclick = exportData;
+    ps.appendChild(pe);
+    view.appendChild(ps);
+  }
+
   const exp = el("button", "btn outline full", "⬇ 导出数据（JSON）");
   exp.style.marginTop = "6px";
   exp.onclick = exportData;
@@ -139,6 +157,17 @@ export function renderProgress(view, subEl) {
   view.appendChild(imp);
 }
 
+const BACKUP_HINT_KEY = "gym4.backup.hint.v1";
+function shouldHintBackup() {
+  if (db.sessions.length <= 30) return false;
+  try {
+    if (localStorage.getItem(BACKUP_HINT_KEY)) return false;
+    localStorage.setItem(BACKUP_HINT_KEY, "1");
+  } catch {}
+  return true;
+}
+
+/* ---------------- Canvas 图表 ---------------- */
 function roundRect(ctx, x, y, w, h, r) {
   if (h < r) r = h;
   ctx.beginPath();
@@ -229,6 +258,17 @@ document.addEventListener("themechange", () => {
   charts = charts.filter(c => c.canvas.isConnected);
   charts.forEach(c => paintBars(c.canvas, c.data, c.opt));
 });
+document.addEventListener("tabchange", e => {
+  active = e.detail && e.detail.tab === "progress";
+});
+document.addEventListener("persistchange", () => {
+  if (!active) return;
+  const view = document.getElementById("view");
+  const sub = document.getElementById("appbarSub");
+  if (view && sub) renderProgress(view, sub);
+});
+
+/* ---------------- 导入导出 ---------------- */
 export function exportData() {
   const blob = new Blob([JSON.stringify(db, null, 2)], { type: "application/json" });
   const a = document.createElement("a");

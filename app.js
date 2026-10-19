@@ -1,5 +1,5 @@
 /* 入口：路由、导航、初始化 */
-import { $, $$ } from "./js/core.js";
+import { $, $$, requestPersist } from "./js/core.js";
 import { renderPlan, setSessionCounter } from "./js/plan.js";
 import { renderLog, sessionsOfDay } from "./js/log.js";
 import { renderProgress } from "./js/progress.js";
@@ -9,6 +9,9 @@ const subEl = $("#appbarSub");
 
 // plan 页的「已练 N 次」计数由 log 页提供，避免循环依赖
 setSessionCounter(id => sessionsOfDay(id).length);
+
+// 申请持久化存储，避免浏览器长期不用时清掉本机记录
+requestPersist();
 
 const RENDERERS = {
   plan: () => renderPlan(view, subEl),
