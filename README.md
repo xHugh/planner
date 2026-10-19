@@ -67,8 +67,7 @@ gym-pwa/
 ├── fonts/          Barlow Condensed 拉丁子集（数字与计时用）
 ├── icons/          应用图标（app-icon.svg 为母版，其余由它渲染）
 ├── scripts/        开发脚本：本地服务器、图标渲染
-├── tests/          自动化测试（Playwright，仅开发用）
-└── .github/        CI：每次 push 跑自动化测试
+└── tests/          自动化测试（Playwright，仅开发用）
 ```
 
 整个 App 无外部依赖、无构建步骤，唯一的第三方资源是字体（Barlow Condensed，SIL OFL 1.1，见 `fonts/README.txt`）。
@@ -94,11 +93,7 @@ node tests/run.js flow     # 只跑名字含 "flow" 的用例
 
 需要本机已有 `playwright` + chromium（仅开发用），与 `scripts/render-icons.js` 同一约定；仓库本身不依赖 npm。
 
-GitHub Actions 会在每次 push 到 `main` 和每次 PR 上自动跑同一套用例（workflow 里临时装 playwright，仓库不产生 `package.json`）。跑挂了也不用登录 Actions 看日志，输出会推到 `ci-debug` 分支：
-
-```bash
-curl -s https://raw.githubusercontent.com/xHugh/planner/ci-debug/test-output.txt | tail -40
-```
+仓库没有 CI：每次 push 不会自动跑测试。改完代码先在本地 `node tests/run.js` 跑通再提交。线上部署走 GitHub Pages（`main` 分支根目录），与测试无关。
 
 ## 修改训练计划
 
