@@ -1030,3 +1030,63 @@ main > *:nth-child(n+6) { animation-delay: .22s; }
 .sheet-content .section-h { margin-top: 4px; }
 .sheet-content > .move:first-of-type { border-top: 0; padding-top: 6px; }
 .sheet-footer .btn { min-height: 46px; }
+
+/* ---------- 重构：内联样式收编 ---------- */
+
+/* 动作卡头部：徽标与标题同行，无边框无留白 */
+.move.move-flat { border: 0; padding: 0; }
+
+/* 通用间距工具类（替代内联 style） */
+.mt-4  { margin-top: 4px; }
+.mt-6  { margin-top: 6px; }
+.mt-10 { margin-top: 10px; }
+.mt-14 { margin-top: 14px; }
+.mt-16 { margin-top: 16px; }
+.mt-18 { margin-top: 18px; }
+
+.flex { display: flex; }
+.flex-center { display: flex; align-items: center; gap: 10px; }
+.flex-gap-8 { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.text-center { text-align: center; }
+.text-danger-strong { color: var(--danger); font-weight: 700; }
+
+.sheet-head-title { font-size: 18px; }
+.sheet-head-title-lg { font-size: 19px; }
+
+.section-h-tight { margin-top: 4px; }
+
+.card-fill { background: var(--fill); box-shadow: none; margin: 18px 0 0; }
+.card-fill .card-title { margin: 4px 0 0; }
+.card-fill .card-sub { margin-top: 4px; }
+
+.card-title-danger { color: var(--danger); }
+
+.fill-btn { margin-top: 10px; }
+
+.wo-head-main { flex: 1; min-width: 0; }
+
+.rules-list {
+  margin: 12px 0 0 18px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.85;
+  color: var(--muted);
+}
+
+.move-thumb-time {
+  width: 58px;
+  height: 58px;
+  border-radius: var(--r-md);
+  flex: 0 0 58px;
+  background: var(--fill);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.mb-6  { margin-bottom: 6px; }
+.mb-12 { margin-bottom: 12px; }
