@@ -39,7 +39,7 @@ node tests/run.js --url=http://127.0.0.1:8765   # 对已启动的服务跑
 
 ## 关键约束
 
-- **Service Worker 策略**：`sw.js` 对同源 GET 走 **network-first**（3s 超时回退缓存），离线兜底靠 `ASSETS` 预缓存。改线上文件**不需要**手动改版本号，用户下次打开自动是新的；`CACHE`（当前 `gym4-v16`）只用于 `activate` 时清理旧缓存，仍建议递增。新增静态文件必须同步加入 `ASSETS`，否则离线时缺失（`offline` 用例会检查清单完整性）。
+- **Service Worker 策略**：`sw.js` 对同源 GET 走 **network-first**（3s 超时回退缓存），离线兜底靠 `ASSETS` 预缓存。改线上文件**不需要**手动改版本号，用户下次打开自动是新的；`CACHE`（当前 `gym4-v17`）只用于 `activate` 时清理旧缓存，仍建议递增。新增静态文件必须同步加入 `ASSETS`，否则离线时缺失（`offline` 用例会检查清单完整性）。
 - **草稿不可覆盖**：草稿键为 `dayId@date`，同一天同一训练日只有一份。`getDraft()` 命中已有草稿时**一律续用**，绝不能覆盖——覆盖会丢掉用户已勾选的组（历史上出过这个 bug）。要丢弃用记录页草稿行的「✕」按钮。草稿的 `touched` 字段标记用户是否动过它：开了训练什么都没动就退出的空草稿会在渲染时清掉。
 - **训练计时**：`elapsedMs` 是累计活跃时长，`lastResumedAt` 是本次开始时刻。切后台/锁屏走 `visibilitychange` 暂停，计时不增长；`durationMin` 由 `elapsedMs` 得出。
 - **HTML 转义**：`html` 不转义，只用于 `data.js` 等可信常量；动态数据（备注、动作名、导入内容）必须经 `esc()`。现有代码全部是 `html` + 显式 `esc`，照此处理。
