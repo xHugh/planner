@@ -2,7 +2,7 @@
    策略：同源 GET 一律 network-first（3s 超时回退缓存）。
    好处是改了线上文件不用手动改版本号，用户下次打开就是新的；
    CACHE 只用于 activate 时清理旧缓存，以及离线时兜底。 */
-var CACHE = "gym4-v15";
+var CACHE = "gym4-v16";
 var ASSETS = [
   "./",
   "./index.html",
