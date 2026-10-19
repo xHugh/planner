@@ -547,6 +547,216 @@ const SUITES = [
   },
 
   {
+    name: "data · 坏草稿与坏容器不崩页",
+    async run(page, t, base) {
+      await page.goto(base, { waitUntil: "networkidle" });
+
+      // 草稿的 sets 里混了 null：消费端直接读 x.done，校验必须挡掉
+      await page.evaluate(() => {
+        localStorage.setItem("gym4.db.v1", JSON.stringify({
+          sessions: [], drafts: {
+            "w1@2026-10-18": {
+              key: "w1@2026-10-18", dayId: "w1", date: "2026-10-18", touched: false,
+              moves: [{ index: 0, name: "坐姿推胸机", sets: [null] }],
+            },
+          },
+        }));
+      });
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(500);
+      await page.click('.nav-btn[data-tab="log"]');
+      await page.waitForTimeout(600);
+      t.ok((await page.locator("#view").innerText()).includes("训练历史"), "坏草稿不打断记录页渲染");
+      t.eq(await page.locator("#view .row-drop").count(), 0, "坏草稿不显示在未完成列表");
+      t.eq(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("gym4.db.v1")).drafts).length), 0, "坏草稿被清理");
+
+      // 同一份坏草稿开训练页也不能崩
+      await page.evaluate(() => {
+        localStorage.setItem("gym4.db.v1", JSON.stringify({
+          sessions: [], drafts: {
+            "w1@2026-10-18": {
+              key: "w1@2026-10-18", dayId: "w1", date: "2026-10-18", touched: true,
+              moves: [{ index: 0, name: "坐姿推胸机", sets: [null] }],
+            },
+          },
+        }));
+      });
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(500);
+      await page.click('.nav-btn[data-tab="plan"]');
+      await page.waitForTimeout(400);
+      await page.locator(".daychip[data-day='w1']").click();
+      await page.waitForTimeout(350);
+      await page.click("#sheetFooter button.btn");
+      await page.waitForTimeout(700);
+      t.ok(await page.locator(".wo-move").count() > 0, "坏草稿不影响开始新训练");
+
+      // 容器类型不对时退化为空集合，三个页面都得能渲染
+      for (const [label, raw] of [
+        ["sessions 不是数组", JSON.stringify({ sessions: {}, drafts: {} })],
+        ["drafts 不是对象", JSON.stringify({ sessions: [], drafts: "abc" })],
+      ]) {
+        await page.evaluate(v => localStorage.setItem("gym4.db.v1", v), raw);
+        await page.reload({ waitUntil: "networkidle" });
+        await page.waitForTimeout(500);
+        t.eq(await page.locator(".hero h2").count(), 1, `${label}：计划页能渲染`);
+        t.eq(await page.locator(".daychip").count(), 7, `${label}：周安排正常`);
+        await page.click('.nav-btn[data-tab="log"]');
+        await page.waitForTimeout(500);
+        t.ok(await page.locator("#view .btn.solid.full").count() > 0, `${label}：记录页能渲染`);
+        await page.click('.nav-btn[data-tab="progress"]');
+        await page.waitForTimeout(500);
+        t.ok(await page.locator("#view .empty").count() > 0, `${label}：进度页能渲染`);
+      }
+    },
+  },
+
+  {
+    name: "draft · 草稿身份归一化",
+    async run(page, t, base) {
+      await page.goto(base, { waitUntil: "networkidle" });
+
+      // 草稿缺 key：加载时补齐，完成训练后必须被删掉（否则同一份训练能重复完成）
+      await page.evaluate(() => {
+        localStorage.setItem("gym4.db.v1", JSON.stringify({
+          sessions: [],
+          drafts: {
+            "w1@2026-10-18": {
+              // 故意不写 key
+              dayId: "w1", date: "2026-10-18", startedAt: Date.now() - 6e5, elapsedMs: 6e5, lastResumedAt: null, touched: true,
+              moves: [{ index: 0, name: "坐姿推胸机", sets: [{ weight: "80", reps: "9", done: true }] }],
+              rir: 2, pain: 0, note: "",
+            },
+          },
+        }));
+      });
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(500);
+      await page.click('.nav-btn[data-tab="log"]');
+      await page.waitForTimeout(500);
+      const dr = await page.evaluate(() => JSON.parse(localStorage.getItem("gym4.db.v1")).drafts["w1@2026-10-18"]);
+      t.eq(dr && dr.key, "w1@2026-10-18", "草稿缺 key 时被补齐为规范键");
+
+      await page.locator("#view .row-tap").first().click();
+      await page.waitForTimeout(700);
+      await page.click("#woFinishBtn");
+      await page.waitForTimeout(900);
+      const after = await page.evaluate(() => {
+        const raw = JSON.parse(localStorage.getItem("gym4.db.v1"));
+        return { sessions: raw.sessions.length, drafts: Object.keys(raw.drafts).length };
+      });
+      t.eq(after.sessions, 1, "完成训练生成 1 条记录");
+      t.eq(after.drafts, 0, "草稿缺 key 时完成训练后草稿被删除");
+
+      // 草稿存在非规范键下：续用必须拿到原数据，且搬迁后不残留第二份
+      await page.evaluate(() => {
+        localStorage.setItem("gym4.db.v1", JSON.stringify({
+          sessions: [],
+          drafts: {
+            "legacy-key": {
+              key: "legacy-key", dayId: "w1", date: "2026-10-19", startedAt: Date.now() - 6e5, elapsedMs: 6e5,
+              lastResumedAt: null, touched: true,
+              moves: [{ index: 0, name: "坐姿推胸机", sets: [{ weight: "80", reps: "9", done: true }] }],
+              rir: 2, pain: 0, note: "非规范键的草稿",
+            },
+          },
+        }));
+      });
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(500);
+
+      const opened = await page.evaluate(async () => {
+        const m = await import("./js/log.js");
+        m.openWorkout("w1", "2026-10-19");
+        await new Promise(r => setTimeout(r, 400));
+        return {
+          weight: document.querySelector("#view input[type=number]").value,
+          note: document.querySelector("#view input[type=text]").value,
+          keys: Object.keys(JSON.parse(localStorage.getItem("gym4.db.v1")).drafts),
+        };
+      });
+      t.eq(opened.weight, "80", "非规范键的草稿被续用，重量不丢");
+      t.eq(opened.note, "非规范键的草稿", "非规范键的草稿被续用，备注不丢");
+      t.eq(opened.keys.length, 1, "搬迁后不残留第二份草稿");
+      t.eq(opened.keys[0], "w1@2026-10-19", "草稿被搬到规范键 dayId@date");
+    },
+  },
+
+  {
+    name: "workout · 刷新后时长不丢",
+    async run(page, t, base) {
+      await page.goto(base, { waitUntil: "networkidle" });
+      await page.evaluate(() => localStorage.clear());
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(400);
+
+      await openDay(page, "w1");
+      // 勾一组：草稿 touched=true，不会被当成空草稿清掉
+      await page.locator("#view .check").first().click();
+      await page.waitForTimeout(2600);
+
+      // 切后台再回前台：回前台后计时继续走，这段时间同样不能丢
+      await page.evaluate(() => {
+        Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      await page.waitForTimeout(1200);
+      await page.evaluate(() => {
+        Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      await page.waitForTimeout(2200);
+      const before = await page.locator("#woDockTimer").innerText();
+
+      // 训练中刷新页面：已累计的时长不能丢
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(500);
+      await page.click('.nav-btn[data-tab="log"]');
+      await page.waitForTimeout(500);
+      t.eq(await page.locator("#view .row-tap").count(), 1, "刷新后草稿还在未完成列表");
+      await page.locator("#view .row-tap").first().click();
+      await page.waitForTimeout(800);
+      const after = await page.locator("#woDockTimer").innerText();
+
+      t.ok(/^\d{2}:\d{2}$/.test(before), `刷新前有计时：${before}`);
+      t.ok(/^\d{2}:\d{2}$/.test(after), `刷新后有计时：${after}`);
+      const toSec = s => +s.slice(0, 2) * 60 + +s.slice(3);
+      t.ok(toSec(after) >= toSec(before), `刷新后计时不倒退（${before} → ${after}）`);
+    },
+  },
+
+  {
+    name: "history · 训练日缺失时编辑有提示",
+    async run(page, t, base) {
+      await page.goto(base, { waitUntil: "networkidle" });
+      // 训练日 id 不在当前计划里（改过 data.js 的 day id 就会这样）
+      await page.evaluate(() => {
+        localStorage.setItem("gym4.db.v1", JSON.stringify({
+          sessions: [{
+            id: "orphan", dayId: "w9", date: "2026-10-16", durationMin: 50, maxPain: 0, rir: 2, note: "",
+            moves: [{ name: "坐姿推胸机", sets: [{ weight: "80", reps: "9", done: true }] }],
+          }],
+          drafts: {},
+        }));
+      });
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(500);
+      await page.click('.nav-btn[data-tab="log"]');
+      await page.waitForTimeout(500);
+      t.eq(await page.locator("#view .row-tap").count(), 1, "训练日缺失的记录仍能列出");
+      await page.locator("#view .row-tap").first().click();
+      await page.waitForTimeout(500);
+      t.eq(await page.locator('#sheetFooter button:has-text("编辑这条记录")').count(), 1, "详情弹层有编辑按钮");
+
+      await page.click('#sheetFooter button:has-text("编辑这条记录")');
+      await page.waitForTimeout(600);
+      t.ok(await page.locator(".sheet-mask").isVisible(), "点编辑后弹层没有消失");
+      t.ok((await page.locator("#toast").innerText()).includes("当前计划"), "给出可读提示：" + (await page.locator("#toast").innerText()));
+      t.eq(await page.locator(".wo-summary").count(), 0, "没有进入空白的训练页");
+    },
+  },
+
+  {
     name: "data · 写盘失败与旧记录编辑",
     async run(page, t, base) {
       await page.goto(base, { waitUntil: "networkidle" });

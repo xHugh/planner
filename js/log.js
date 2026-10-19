@@ -4,7 +4,7 @@ import { PLAN } from "../data.js";
 import {
   html, list, esc, el, chips, setRow, moveBadge, fmtDate, pad, today,
   db, saveDB, toast, uid, setSheet, $, closeSheet, validSessions, validDraft,
-  brokenCard
+  brokenCard, draftKey, normalizeDrafts
 } from "./core.js";
 import { dayById, plannedDayId } from "./plan.js";
 
@@ -36,12 +36,23 @@ export function emptyMoves(day, date) {
 }
 
 export function getDraft(dayId, date) {
-  const k = dayId + "@" + date;
+  const k = draftKey(dayId, date);
   const d0 = dayById(dayId);
   // 已有草稿一律续用，绝不覆盖。
   // 早期版本在「开始今天」时会用空草稿覆盖同一天的旧草稿，导致已勾选的组和备注丢失。
   // 只有结构损坏的草稿（坏导入、手改 localStorage）才按计划重建，否则一开训练就崩。
   let dr = db.drafts[k];
+  let from = k;
+  if (!validDraft(dr)) {
+    // 规范键下没有可用草稿：按 dayId+date 找一份。
+    // 导入的旧备份或手改 localStorage 可能把草稿存在别的键下，
+    // 只按规范键查会漏掉它——「继续」会打开空表单，原草稿还留在原地。
+    const alt = Object.keys(db.drafts).find(x => {
+      const o = db.drafts[x];
+      return x !== k && validDraft(o) && o.dayId === dayId && o.date === date;
+    });
+    if (alt) { dr = db.drafts[alt]; from = alt; }
+  }
   if (!validDraft(dr)) {
     const old = dr && typeof dr === "object" ? dr : {};
     dr = {
@@ -53,6 +64,13 @@ export function getDraft(dayId, date) {
       note: old.note || "",
     };
     db.drafts[k] = dr;
+  } else {
+    // 归一化：草稿身份只认 dayId@date，键不对就搬回规范键下
+    dr.key = k;
+    if (from !== k) {
+      db.drafts[k] = dr;
+      delete db.drafts[from];
+    }
   }
   // 旧版草稿迁移：逐动作 rir/pain/note 收敛到训练级
   if (dr.rir == null || dr.pain == null) {
@@ -138,10 +156,10 @@ export function renderLog(view, subEl) {
   view.appendChild(c);
 
   // 清理僵尸草稿：开了训练但什么都没动就退出；结构坏掉的草稿也一并删掉
-  let dropped = false;
+  // normalizeDrafts() 顺带把草稿键归一化到 dayId@date（导入/手改的草稿可能存在别的键下）
+  let dropped = normalizeDrafts();
   Object.keys(db.drafts).forEach(k => {
     const dr = db.drafts[k];
-    if (!validDraft(dr)) { delete db.drafts[k]; dropped = true; return; }
     if (dr.touched === false && countDone(dr).done === 0) {
       delete db.drafts[k];
       dropped = true;
@@ -259,6 +277,12 @@ export function showSessionSheet(id) {
   const foot = el("div", "sheet-actions");
   const editBtn = el("button", "btn solid full", "编辑这条记录");
   editBtn.onclick = () => {
+    // 训练日已不在当前计划里（改过 data.js 的 day id 等）就别关弹层后毫无反应，
+    // 给一句能读懂的提示，用户才知道这条记录为什么点不动
+    if (!dayById(s.dayId)) {
+      toast("这条记录的训练日已不在当前计划里，无法编辑");
+      return;
+    }
     closeSheet();
     openWorkout(s.dayId, s.date, { session: s });
   };
@@ -294,6 +318,7 @@ function setWorkoutMode(on) {
 
 /* ---------------- 计时：只统计活跃时间 ----------------
    锁屏 / 切到后台的时间不算训练时长，切回来接着走。 */
+const MAX_RESUME_GAP_MS = 2 * 60 * 60 * 1000; // 恢复时最多补 2 小时，避免隔夜重开记成 10 小时训练
 function elapsedOf(dr) {
   return (dr.elapsedMs || 0) + (dr.lastResumedAt ? Date.now() - dr.lastResumedAt : 0);
 }
@@ -326,8 +351,21 @@ function startTimer() {
 }
 document.addEventListener("visibilitychange", () => {
   if (!state.wo) return;
-  if (document.hidden) { pauseClock(state.wo.draft); stopTimer(); }
-  else { resumeClock(state.wo.draft); startTimer(); }
+  if (document.hidden) {
+    pauseClock(state.wo.draft);
+    // 暂停后立刻落盘：页面被刷新、被关掉时，已累计的时长不能丢
+    saveDB();
+    stopTimer();
+  } else { resumeClock(state.wo.draft); startTimer(); }
+});
+
+// 刷新 / 关闭 / 跳走都会触发 pagehide：把当前累计时长落盘。
+// 只靠 visibilitychange 不够——从后台切回前台后计时继续走，
+// 但这中间没有任何落盘时机，页面一刷新这段时间就白丢了。
+window.addEventListener("pagehide", () => {
+  if (!state.wo) return;
+  pauseClock(state.wo.draft);
+  saveDB();
 });
 
 function ringSvg(done, total) {
@@ -348,7 +386,11 @@ function ringSvg(done, total) {
 
 export function openWorkout(dayId, date, opts) {
   const d = dayById(dayId);
-  if (!d) return;
+  if (!d) {
+    // 兜底：训练日不在计划里就不要渲染一个空白的训练页
+    toast("这个训练日已不在当前计划里，无法打开训练");
+    return;
+  }
   const o = opts || {};
   let draft, editingId = null;
 
@@ -396,6 +438,14 @@ export function openWorkout(dayId, date, opts) {
     if (draft.touched == null) draft.touched = true;
   }
   draft.pain = snapPain(draft.pain);
+  // 草稿里还留着上次计时的起点（页面被刷新/关掉，来不及落盘）：
+  // 把这段间隔并进已累计时长，否则恢复后计时会从零重来。
+  // 上限 2 小时：隔夜再打开 App 不该被记成 10 小时训练。
+  if (draft.lastResumedAt) {
+    const gap = Math.max(0, Date.now() - draft.lastResumedAt);
+    draft.elapsedMs = (draft.elapsedMs || 0) + Math.min(gap, MAX_RESUME_GAP_MS);
+    draft.lastResumedAt = null;
+  }
   resumeClock(draft);
   if (!editingId) saveDB();
   state.wo = { draft, timerId: null, editingId };
@@ -626,11 +676,15 @@ export function finishWorkout(d) {
     maxPain: Math.max(dr.pain || 0, legacyPain),
     note: dr.note || "",
   });
-  delete db.drafts[dr.key];
+  // 草稿按规范键 dayId@date 删除，不依赖草稿对象自带的 key：
+  // 导入或手改的草稿可能没有 key，那样删的是 drafts[undefined]，草稿会留下来
+  // 让同一份训练可以被重复完成，生成重复记录。
+  const dk = draftKey(dr.dayId, dr.date);
+  delete db.drafts[dk];
   if (!saveDB()) {
     // 写盘失败：回滚内存状态，训练页保持打开，错误提示留在屏幕上
     db.sessions.pop();
-    db.drafts[dr.key] = dr;
+    db.drafts[dk] = dr;
     return;
   }
   stopTimer();
