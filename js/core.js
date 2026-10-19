@@ -2,11 +2,6 @@
    供 plan.js / log.js / progress.js 共享，无页面逻辑 */
 
 /* ---------------- 模板 ---------------- */
-// tpl`Hello ${name}` —— ${} 自动转义
-export function tpl(strings) {
-  const vals = Array.prototype.slice.call(arguments, 1);
-  return strings.reduce((acc, s, i) => acc + s + (i < vals.length ? esc(vals[i]) : ""), "");
-}
 // html`` 标记内容已含 HTML，不转义（仅用于 PLAN 等可信数据）
 export function html(strings) {
   const vals = Array.prototype.slice.call(arguments, 1);
