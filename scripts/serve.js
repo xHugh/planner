@@ -32,7 +32,15 @@ const MIME = {
 };
 
 const server = http.createServer(async (req, res) => {
-  let rel = decodeURIComponent(req.url.split("?")[0]);
+  let rel;
+  try {
+    rel = decodeURIComponent(req.url.split("?")[0]);
+  } catch {
+    // 非法 percent-encoding（如 GET /%）：URIError 必须拦在这里，
+    // 抛出去会成为未捕获异常，整个服务进程直接退出
+    res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" }).end("400 Bad Request");
+    return;
+  }
   if (rel.endsWith("/")) rel += "index.html";
   const file = path.join(ROOT, rel);
 
