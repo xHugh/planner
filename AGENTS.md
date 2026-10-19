@@ -51,6 +51,9 @@ node tests/run.js --url=http://127.0.0.1:8765   # 对已启动的服务跑
 - **模块依赖环**：`log.js` 静态 import `plan.js`；反过来 `plan.js` 只能 `await import("./log.js")`，训练计数经 `app.js` 的 `setSessionCounter` 注入，避免循环依赖。
 - **双主题颜色**：颜色分别定义在 `:root` 和 `:root[data-theme="dark"]`；新增训练日或颜色两边都要加，`--card-top` 在深色主题必须覆盖，否则白字压白底。**正文用的红色要 `--danger-ink`（浅 `#b91c1c` / 深 `#fca5a5`），不要用 `--danger`**——`--danger` 当文字色在浅底上只有 3.75:1，不达 AA。告警卡用 `.card-warn` 类，深色主题必须覆盖背景。`tests/run.js` 的 `contrastScan` 会把半透明背景逐层合成后计算对比度。
 - **本地数据**：键名 `gym4.db.v1`（`sessions`/`drafts`）、`gym4.theme`、`gym4.persist.v1`、`gym4.backup.hint.v1`；无后端。改数据结构要考虑旧数据迁移（`log.js` 里有旧版草稿兼容代码）。导入 JSON 走 `validateDB()`（`sessions` 和 `drafts` 都校验，`rir`/`maxPain`/`durationMin` 必须是数字），结构不对的数据直接拒绝、不写盘。`saveDB()` 写盘失败会 toast 并返回 `false`：调用方只在成功时删草稿、提示成功；另一个标签页写入会触发 `storage` 同步（训练中只提醒，不覆盖）。
+- **记录定位以对象引用为准**：详情/编辑/删除都按被选中的记录对象本身定位（`indexOf`/`includes`），**不要用 `id` 匹配**——手改 localStorage 可能出现重复 `id`，按 id 过滤会把同 id 的记录一起删掉或改错。`validateDB()` 同时拒绝重复 id 的导入（双层防御）。`showSessionSheet` 兼容传 id 字符串（按第一条匹配，仅测试用），新入口一律传记录对象；编辑模式用 `state.wo.editingRef` 锚定打开时的那条记录。
+- **编辑有修改时 beforeunload 提示**：编辑历史记录期间任何修改入口都会置位 `state.wo.editDirty`，`beforeunload` 据此弹浏览器原生离开确认；未编辑或没改过就不弹。**编辑草稿仍然只存内存**（刷新/关页即丢，原记录无损，这是既定取舍）；iOS Safari 与 PWA 独立窗口对该提示支持有限，为已知限制。
+- **进度统计过滤未来日期**：`js/progress.js` 的 `countableSessions()` 过滤 `date > today()` 的记录，统计卡与两张图表共用过滤后的数组（未来日期只会来自手改/坏导入）；记录页历史列表**不走**此过滤，未来记录仍可查看。开始表单日期输入有 `max = today()` 与提交前双重校验，不能开始未来日期的训练。
 
 ## 图标
 
