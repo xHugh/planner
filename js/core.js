@@ -186,6 +186,12 @@ export function saveDB() {
   }
 }
 
+// 可用记录：旧版本遗留或手改 localStorage 的残缺记录可能缺字段，
+// 消费前统一过滤，避免各页面各自判空时漏掉一处
+export function validSessions() {
+  return db.sessions.filter(s => s && typeof s.date === "string" && Array.isArray(s.moves));
+}
+
 /* ---------------- 持久化存储 ----------------
    申请后浏览器不会在磁盘紧张时清掉本机数据（iOS 尤其重要）。 */
 export const storage = { persisted: null };

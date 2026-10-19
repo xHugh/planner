@@ -464,6 +464,26 @@ const SUITES = [
       await page.waitForTimeout(600);
       t.ok(await page.locator(".stat").count() >= 3, "残缺记录不影响统计渲染");
       t.ok((await page.locator("#view").innerText()).includes("格式异常"), "残缺记录有提示");
+
+      // 同一条残缺记录在记录页也不能把页面打崩：历史列表、开始新训练、详情弹窗
+      await page.click('.nav-btn[data-tab="log"]');
+      await page.waitForTimeout(600);
+      t.eq(await page.locator("#view .row-tap").count(), 1, "记录页只列出可用记录");
+      t.ok((await page.locator("#view").innerText()).includes("W1 胸+三头"), "可用记录正常显示");
+      t.ok((await page.locator("#view").innerText()).includes("格式异常"), "残缺记录在记录页有提示");
+
+      await page.locator("#view .btn.solid.full").first().click();
+      await page.waitForTimeout(600);
+      t.ok(await page.locator(".wo-move").count() > 0, "残缺记录不影响开始新训练");
+      await page.click("#woExitBtn");
+      await page.waitForTimeout(500);
+
+      const sheet = await page.evaluate(async () => {
+        const m = await import("./js/log.js");
+        try { m.showSessionSheet("bad"); return "no throw"; }
+        catch (e) { return e.constructor.name + ": " + e.message; }
+      });
+      t.eq(sheet, "no throw", "残缺记录的详情弹窗不抛错");
     },
   },
 

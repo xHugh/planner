@@ -3,13 +3,13 @@
 import { PLAN } from "../data.js";
 import {
   html, list, esc, el, chips, setRow, moveBadge, fmtDate, pad, today,
-  db, saveDB, toast, uid, setSheet, $, $$, closeSheet
+  db, saveDB, toast, uid, setSheet, $, $$, closeSheet, validSessions
 } from "./core.js";
 import { dayById, plannedDayId } from "./plan.js";
 
 /* ---------------- 数据工具 ---------------- */
 export function lastEntry(moveName, beforeDate) {
-  const sessions = db.sessions.slice().sort((a, b) => (a.date < b.date ? 1 : -1));
+  const sessions = validSessions().sort((a, b) => (a.date < b.date ? 1 : -1));
   for (const s of sessions) {
     if (beforeDate && s.date > beforeDate) continue;
     const m = s.moves.find(x => x.name === moveName);
@@ -19,7 +19,7 @@ export function lastEntry(moveName, beforeDate) {
 }
 
 export function sessionsOfDay(dayId) {
-  return db.sessions.filter(s => s.dayId === dayId);
+  return validSessions().filter(s => s.dayId === dayId);
 }
 
 export function emptyMoves(day, date) {
@@ -161,8 +161,18 @@ export function renderLog(view, subEl) {
     view.appendChild(el("div", "empty", "<strong>🏋️</strong>还没有记录。<br>做完第一次训练后，这里会显示历史。"));
     return;
   }
+  // 残缺记录无法显示，在这里说明去向，别让用户以为记录丢了
+  const valid = validSessions();
+  const broken = db.sessions.length - valid.length;
+  if (broken) {
+    const w = el("div", "card card-warn");
+    w.innerHTML = html`
+      <div class="card-title card-title-danger">⚠️ 有 ${broken} 条记录格式异常已跳过</div>
+      <p class="card-sub">这些记录缺少动作数据，无法显示。可在进度页导出备份后手动清理。</p>`;
+    view.appendChild(w);
+  }
   const listBox = el("div", "card");
-  db.sessions.slice().sort((a, b) => (a.date < b.date ? 1 : -1)).forEach(s => {
+  valid.sort((a, b) => (a.date < b.date ? 1 : -1)).forEach(s => {
     const d = dayById(s.dayId);
     let sets = 0, vol = 0;
     s.moves.forEach(m => m.sets.forEach(x => {
@@ -186,7 +196,8 @@ export function renderLog(view, subEl) {
 }
 
 export function showSessionSheet(id) {
-  const s = db.sessions.find(x => x.id === id);
+  // 只认可用记录：残缺记录（缺 date 或 moves）在列表里也不会出现
+  const s = validSessions().find(x => x.id === id);
   if (!s) return;
   const d = dayById(s.dayId);
 

@@ -1,6 +1,6 @@
 /* 进度页：统计卡片、容量/疼痛图表、最佳组表、数据导入导出 */
 import {
-  html, list, esc, el, fmtDate, parseDate, dateStr, db, saveDB, toast, today, storage
+  html, list, esc, el, fmtDate, parseDate, dateStr, db, saveDB, toast, today, storage, validSessions
 } from "./core.js";
 import { weekIndex } from "./plan.js";
 
@@ -47,10 +47,10 @@ export function renderProgress(view, subEl) {
   active = true;
   subEl.textContent = "训练量 · 最佳组 · 疼痛趋势";
 
-  const all = db.sessions.slice().sort((a, b) => (a.date < b.date ? -1 : 1));
   // 防御：结构异常的历史记录跳过，不让整页崩掉
-  const broken = all.filter(s => !s || !Array.isArray(s.moves)).length;
-  const sessions = all.filter(s => s && Array.isArray(s.moves));
+  const valid = validSessions();
+  const broken = db.sessions.length - valid.length;
+  const sessions = valid.sort((a, b) => (a.date < b.date ? -1 : 1));
 
   if (!sessions.length) {
     view.appendChild(el("div", "empty", "还没有数据。<br>完成一次训练后，这里会出现进度图表。"));
