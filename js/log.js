@@ -295,7 +295,7 @@ function ringSvg(done, total) {
   const pct = total ? Math.round((done / total) * 100) : 0;
   const R = 23, C = 2 * Math.PI * R;
   return html`
-    <div class="ring">
+    <div class="ring" role="img" aria-label="已完成 ${done} / ${total} 组">
       <svg viewBox="0 0 58 58" aria-hidden="true">
         <defs><linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0%" stop-color="#2563eb"/><stop offset="100%" stop-color="#06b6d4"/>
@@ -385,7 +385,7 @@ export function renderWorkout(d) {
     <div class="wo-head">
       <div class="wo-head-main">
         <div class="card-title">${esc(d.name)}</div>
-        <p class="card-sub" id="woSub">${dr.date} · 已完成 ${doneSets}/${totalSets} 组</p>
+        <p class="card-sub" id="woSub" aria-live="polite">${dr.date} · 已完成 ${doneSets}/${totalSets} 组</p>
       </div>
       <div class="flex-center">${ringSvg(doneSets, totalSets)}<div id="timer" class="timer">--:--</div></div>
     </div>`;
@@ -503,6 +503,7 @@ export function renderWorkout(d) {
       const fg = ring.querySelector("svg circle:last-child");
       if (fg) fg.setAttribute("stroke-dashoffset", (C * (1 - pct / 100)).toFixed(1));
       ring.querySelector(".lbl").textContent = pct + "%";
+      ring.setAttribute("aria-label", `已完成 ${c.done} / ${c.total} 组`);
     }
     if (woDockCount) woDockCount.textContent = `已完成 ${c.done}/${c.total} 组`;
     if (woDockFill) woDockFill.style.width = pct + "%";

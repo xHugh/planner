@@ -18,13 +18,24 @@ const RENDERERS = {
 
 let TAB = "plan";
 
+function setTab(tab) {
+  TAB = tab;
+  $$(".nav-btn").forEach(x => {
+    const on = x.getAttribute("data-tab") === tab;
+    x.classList.toggle("active", on);
+    if (on) x.setAttribute("aria-current", "page");
+    else x.removeAttribute("aria-current");
+  });
+  document.dispatchEvent(new CustomEvent("tabchange", { detail: { tab } }));
+}
+
 $$(".nav-btn").forEach(b => {
   b.addEventListener("click", () => {
-    TAB = b.getAttribute("data-tab");
-    $$(".nav-btn").forEach(x => x.classList.toggle("active", x === b));
+    setTab(b.getAttribute("data-tab"));
     RENDERERS[TAB]();
     window.scrollTo({ top: 0 });
   });
 });
 
+setTab(TAB);
 RENDERERS[TAB]();
