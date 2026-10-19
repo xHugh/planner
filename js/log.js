@@ -243,6 +243,43 @@ function setWorkoutMode(on) {
   workoutDock.classList.toggle("hidden", !on);
 }
 
+/* ---------------- 计时：只统计活跃时间 ----------------
+   锁屏 / 切到后台的时间不算训练时长，切回来接着走。 */
+function elapsedOf(dr) {
+  return (dr.elapsedMs || 0) + (dr.lastResumedAt ? Date.now() - dr.lastResumedAt : 0);
+}
+function pauseClock(dr) {
+  if (dr && dr.lastResumedAt) {
+    dr.elapsedMs = (dr.elapsedMs || 0) + (Date.now() - dr.lastResumedAt);
+    dr.lastResumedAt = null;
+  }
+}
+function resumeClock(dr) { if (dr) dr.lastResumedAt = Date.now(); }
+function fmtElapsed(ms) {
+  const sec = Math.floor(ms / 1000);
+  return String(Math.floor(sec / 60)).padStart(2, "0") + ":" + pad(sec % 60);
+}
+function stopTimer() {
+  if (state.wo && state.wo.timerId) { clearInterval(state.wo.timerId); state.wo.timerId = null; }
+}
+function tickTimer() {
+  const wo = state.wo;
+  if (!wo) return;
+  const txt = fmtElapsed(elapsedOf(wo.draft));
+  const t = $("#timer");
+  if (t) t.textContent = txt;
+}
+function startTimer() {
+  stopTimer();
+  tickTimer();
+  if (state.wo) state.wo.timerId = setInterval(tickTimer, 1000);
+}
+document.addEventListener("visibilitychange", () => {
+  if (!state.wo) return;
+  if (document.hidden) { pauseClock(state.wo.draft); stopTimer(); }
+  else { resumeClock(state.wo.draft); startTimer(); }
+});
+
 function ringSvg(done, total) {
   const pct = total ? Math.round((done / total) * 100) : 0;
   const R = 23, C = 2 * Math.PI * R;
@@ -259,12 +296,13 @@ function ringSvg(done, total) {
       <div class="lbl">${pct}%</div></div>`;
 }
 
-export function openWorkout(dayId, date, resume) {
+export function openWorkout(dayId, date) {
   const d = dayById(dayId);
   if (!d) return;
-  const draft = getDraft(dayId, date, resume);
-  if (draft.fresh) { delete draft.fresh; db.drafts[draft.key] = draft; }
+  const draft = getDraft(dayId, date);
   if (!draft.startedAt) draft.startedAt = Date.now();
+  if (draft.elapsedMs == null) draft.elapsedMs = Math.max(0, Date.now() - draft.startedAt);
+  resumeClock(draft);
   saveDB();
   state.wo = { draft, timerId: null };
   setWorkoutMode(true);
@@ -273,7 +311,8 @@ export function openWorkout(dayId, date, resume) {
 }
 
 export function closeWorkout(save) {
-  if (state.wo?.timerId) clearInterval(state.wo.timerId);
+  if (state.wo) pauseClock(state.wo.draft);
+  stopTimer();
   state.wo = null;
   setWorkoutMode(false);
   if (save) saveDB();
@@ -379,14 +418,7 @@ export function renderWorkout(d) {
     view.appendChild(card);
   });
 
-  const tEl = $("#timer");
-  const tick = () => {
-    const sec = Math.floor((Date.now() - dr.startedAt) / 1000);
-    tEl.textContent = String(Math.floor(sec / 60)).padStart(2, "0") + ":" + pad(sec % 60);
-  };
-  tick();
-  if (wo.timerId) clearInterval(wo.timerId);
-  wo.timerId = setInterval(tick, 1000);
+  startTimer();
 
   const counter = () => {
     const c = countDone(dr);
@@ -420,9 +452,7 @@ export function finishWorkout(d) {
   const dr = wo.draft;
   const c = countDone(dr);
   if (!c.done) { toast("还没有勾选任何一组"); return; }
-  if (!confirm(`完成这次训练？已完成 ${c.done}/${c.total} 组`)) return;
 
-  const duration = Math.round((Date.now() - dr.startedAt) / 60000);
   // 兼容旧版草稿：逐动作疼痛取最大值并入训练级
   const legacyPain = Math.max(...dr.moves.map(m => m.pain || 0), 0);
   const moves = dr.moves.map(m => ({
@@ -430,6 +460,9 @@ export function finishWorkout(d) {
     sets: m.sets.map(s => ({ weight: s.weight, reps: s.reps, done: !!s.done })),
   }));
 
+  if (!confirm(`完成这次训练？已完成 ${c.done}/${c.total} 组`)) return;
+
+  const duration = Math.round(elapsedOf(dr) / 60000);
   db.sessions.push({
     id: uid(), dayId: d.id, date: dr.date, startedAt: dr.startedAt,
     durationMin: Math.max(duration, 1), moves,
@@ -439,7 +472,7 @@ export function finishWorkout(d) {
   });
   delete db.drafts[dr.key];
   saveDB();
-  if (wo.timerId) clearInterval(wo.timerId);
+  stopTimer();
   state.wo = null;
   setWorkoutMode(false);
   toast("训练已保存");
