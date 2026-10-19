@@ -7,10 +7,46 @@
   var TAB = "plan";
   var view = document.getElementById("view");
   var sheet = document.getElementById("sheet");
+  var sheetHeader = document.getElementById("sheetHeader");
   var sheetBody = document.getElementById("sheetBody");
+  var sheetFooter = document.getElementById("sheetFooter");
+  var workoutDock = document.getElementById("workoutDock");
+  var woExitBtn = document.getElementById("woExitBtn");
+  var woFinishBtn = document.getElementById("woFinishBtn");
   var toastEl = document.getElementById("toast");
   var subEl = document.getElementById("appbarSub");
   var bar = document.querySelector(".appbar");
+
+  function setSheet(headerHtml, bodyHtml, footerEl) {
+    if (sheetHeader) {
+      sheetHeader.innerHTML =
+        '<div class="sheet-header-main">' + headerHtml + '</div>' +
+        '<button class="sheet-close-btn" type="button" aria-label="关闭">✕</button>';
+      var closeBtn = sheetHeader.querySelector(".sheet-close-btn");
+      if (closeBtn) closeBtn.onclick = closeSheet;
+    }
+    if (typeof bodyHtml === "string") {
+      sheetBody.innerHTML = bodyHtml;
+    } else {
+      sheetBody.innerHTML = "";
+      sheetBody.appendChild(bodyHtml);
+    }
+    if (sheetFooter) {
+      if (footerEl) {
+        sheetFooter.innerHTML = "";
+        if (typeof footerEl === "string") {
+          sheetFooter.innerHTML = footerEl;
+        } else {
+          sheetFooter.appendChild(footerEl);
+        }
+        sheetFooter.classList.remove("hidden");
+      } else {
+        sheetFooter.innerHTML = "";
+        sheetFooter.classList.add("hidden");
+      }
+    }
+    showSheet();
+  }
 
   /* ---------------- 主题：auto / light / dark ---------------- */
   var THEME_KEY = "gym4.theme";
@@ -277,11 +313,11 @@
     }
     var nextDay = nextIdx >= 0 ? dayById(PLAN.week[nextIdx]) : null;
 
-    var html =
-      '<div class="card-title" style="font-size:19px">' + esc(PLAN.weekdays[dayIdx]) + " · 休息日" + "</div>" +
+    var headerHtml =
+      '<div class="card-title" style="font-size:18px">' + esc(PLAN.weekdays[dayIdx]) + " · 休息日</div>" +
       '<p class="card-sub">肌肉在休息时生长。完全停练不会掉肌肉，但会掉训练状态。</p>';
 
-    html += '<div class="section-h" style="margin-top:20px">建议安排</div>';
+    var html = '<div class="section-h" style="margin-top:4px">建议安排</div>';
     html +=
       '<div class="move"><div class="move-thumb placeholder" style="background:var(--fill)">20′</div>' +
       '<div class="move-body"><div class="move-name">低强度有氧</div>' +
@@ -310,14 +346,16 @@
 
     html += '<p class="move-tip" style="margin-top:16px;text-align:center">休息日也可以开「记录」页补记，避免漏掉历史。</p>';
 
-    sheetBody.innerHTML = html;
-    showSheet();
+    setSheet(headerHtml, html, null);
   }
 
   function showPlanSheet(dayId) {
     var d = dayById(dayId);
-    var html = '<div class="card-title" style="font-size:18px">' + esc(d.name) + "</div>" +
-      '<p class="card-sub" style="margin-bottom:12px">' + esc(d.focus) + "</p>";
+    var headerHtml =
+      '<div class="card-title" style="font-size:18px">' + esc(d.name) + "</div>" +
+      '<p class="card-sub">' + esc(d.focus) + "</p>";
+
+    var html = "";
     d.moves.forEach(function (m, i) {
       var thumb = '<div class="move-badge">' + (i + 1) + "</div>";
       html += '<div class="move">' + thumb +
@@ -327,15 +365,11 @@
         '<div class="move-meta">' + m.sets + " 组 × " + (m.lo === m.hi ? m.lo : m.lo + "-" + m.hi) + (m.cardio ? " 分钟" : " 次") + "</div>" +
         '<div class="move-tip">' + esc(m.tip) + "</div></div></div>";
     });
-    var act = el("div");
-    act.style.cssText = "display:flex;gap:10px;margin-top:16px";
-    var go = el("button", "btn solid full", "按这个计划开练");
-    go.onclick = function () { closeSheet(); openWorkout(dayId, today()); };
-    act.appendChild(go);
-    html += '<div id="sheetActSlot"></div>';
-    sheetBody.innerHTML = html;
-    sheetBody.appendChild(act);
-    showSheet();
+
+    var goBtn = el("button", "btn solid full", "按这个计划开练");
+    goBtn.onclick = function () { closeSheet(); openWorkout(dayId, today()); };
+
+    setSheet(headerHtml, html, goBtn);
   }
 
   /* ---------------- 训练完成度圆环 ---------------- */
@@ -363,16 +397,22 @@
     var guess = plannedDayId(new Date());
     if (!guess) guess = "w1";
 
-    var c = el("div", "card");
+    var c = el("div", "card start-card");
     c.innerHTML = '<div class="card-title">▶ 开始一次训练</div><p class="card-sub">记录只保存在这台设备，不上传</p>';
 
-    var lbl1 = el("label", "field-label", "训练日期");
+    // 日期与训练日并排，压缩纵向高度让历史露出首屏
+    var grid = el("div", "start-grid");
+
+    var dateBox = el("div");
+    dateBox.appendChild(el("label", "field-label", "训练日期"));
     var inpDate = el("input");
     inpDate.type = "date";
     inpDate.value = date;
-    inpDate.style.textAlign = "left";
-    var lbl2 = el("label", "field-label", "训练日");
-    var chips = el("div", "chips");
+    dateBox.appendChild(inpDate);
+
+    var dayBox = el("div");
+    dayBox.appendChild(el("label", "field-label", "训练日"));
+    var chips = el("div", "chips chips-grid");
     PLAN.days.forEach(function (d) {
       var p = el("button", "pick" + (d.id === guess ? " on" : ""), d.name.split(" ")[0] + " " + d.short);
       p.onclick = function () {
@@ -383,16 +423,19 @@
       chips.appendChild(p);
     });
     chips.dataset.pick = guess;
+    dayBox.appendChild(chips);
+
+    grid.appendChild(dateBox);
+    grid.appendChild(dayBox);
+    c.appendChild(grid);
 
     var go = el("button", "btn solid full", "开始记录 →");
-    go.style.marginTop = "18px";
+    go.style.marginTop = "16px";
     go.onclick = function () {
       if (!inpDate.value) { toast("请选择日期"); return; }
       openWorkout(chips.dataset.pick, inpDate.value);
     };
 
-    c.appendChild(lbl1); c.appendChild(inpDate);
-    c.appendChild(lbl2); c.appendChild(chips);
     c.appendChild(go);
     view.appendChild(c);
 
@@ -438,24 +481,12 @@
       var row = el("button", "row row-tap");
       row.type = "button";
       row.style.borderLeft = "3px solid var(--d-" + s.dayId + ")";
-      row.style.paddingLeft = "12px";
       row.innerHTML = '<div class="row-main"><div class="row-title">' + esc(d ? d.name : s.dayId) + " · " + fmtDate(s.date) + "</div>" +
         '<div class="row-sub">' + sets + " 组 · 容量 " + Math.round(vol) + " kg · 时长 " + (s.durationMin || "—") + " 分" +
-        (s.maxPain >= 4 ? ' · <span style="color:var(--danger);font-weight:700">疼痛 ' + s.maxPain + "/10</span>" : "") + "</div></div>";
-      var del = el("span", "btn sm danger", "删除");
-      del.setAttribute("role", "button");
-      del.tabIndex = 0;
-      var doDel = function (e) {
-        e.stopPropagation();
-        if (confirm("删除这条训练记录？")) {
-          db.sessions = db.sessions.filter(function (x) { return x.id !== s.id; });
-          saveDB(); renderLog(); toast("已删除");
-        }
-      };
-      del.onclick = doDel;
-      del.onkeydown = function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); doDel(e); } };
+        (s.maxPain >= 4 ? ' · <span style="color:var(--danger);font-weight:700">疼痛 ' + s.maxPain + "/10</span>" : "") + "</div></div>" +
+        '<span class="row-arrow" aria-hidden="true">›</span>';
+      row.setAttribute("aria-label", "查看 " + (d ? d.name : s.dayId) + " " + s.date + " 的训练详情");
       row.onclick = function () { showSessionSheet(s.id); };
-      row.appendChild(del);
       list.appendChild(row);
     });
     view.appendChild(list);
@@ -465,16 +496,25 @@
     var s = db.sessions.filter(function (x) { return x.id === id; })[0];
     if (!s) return;
     var d = dayById(s.dayId);
-    var html = '<div class="card-title" style="font-size:18px">' + esc(d ? d.name : s.dayId) + "</div>" +
-      '<p class="card-sub">' + s.date + " · 时长 " + (s.durationMin || "—") + " 分钟</p>";
-    // 训练级状态行（新版结构；旧记录无此字段则跳过）
+
+    var sets = 0, vol = 0;
+    s.moves.forEach(function (m) {
+      m.sets.forEach(function (x) { if (x.done) { sets++; vol += (+x.weight || 0) * (+x.reps || 0); } });
+    });
+
+    var headerHtml =
+      '<div class="card-title" style="font-size:18px">' + esc(d ? d.name : s.dayId) + "</div>" +
+      '<p class="card-sub">' + fmtDate(s.date) + " · " + sets + " 组 · 容量 " + Math.round(vol) + " kg</p>";
+
+    var html = "";
     if (s.rir != null || s.maxPain != null) {
-      html += '<div style="display:flex;gap:8px;margin:10px 0 4px;flex-wrap:wrap">' +
+      html += '<div style="display:flex;gap:8px;margin:0 0 6px;flex-wrap:wrap">' +
         '<span class="badge primary">RIR ' + (s.rir != null ? s.rir : "—") + "</span>" +
         '<span class="badge' + ((s.maxPain || 0) >= 4 ? "" : " cardio") + '">疼痛 ' + (s.maxPain || 0) + "/10</span>" +
+        (s.durationMin ? '<span class="badge">' + s.durationMin + " 分钟</span>" : "") +
         "</div>";
     }
-    if (s.note) html += '<p class="move-tip" style="margin-top:6px">' + esc(s.note) + "</p>";
+    if (s.note) html += '<p class="move-tip" style="margin:0 0 4px">' + esc(s.note) + "</p>";
     s.moves.forEach(function (m) {
       html += '<div style="margin-top:14px"><div class="move-name">' + esc(m.name) + "</div>";
       var rows = m.sets.map(function (x, i) {
@@ -485,33 +525,49 @@
       if (m.note) html += '<div class="move-tip">备注：' + esc(m.note) + "</div>";
       if (m.rir != null) html += '<div class="move-tip">RIR ' + m.rir + " · 疼痛 " + (m.pain || 0) + "/10</div>";
     });
-    sheetBody.innerHTML = html;
-    showSheet();
+
+    // 删除移入详情底部，避免列表里误触
+    var delBtn = el("button", "btn danger full", "删除这条记录");
+    delBtn.onclick = function () {
+      if (!confirm("删除 " + fmtDate(s.date) + " 的这条训练记录？此操作不可撤销。")) return;
+      db.sessions = db.sessions.filter(function (x) { return x.id !== s.id; });
+      saveDB();
+      closeSheet();
+      renderLog();
+      toast("已删除");
+    };
+
+    setSheet(headerHtml, html, delBtn);
   }
 
   /* ---------------- 训练进行中 ---------------- */
   var wo = null; // { draft, timerId }
+
+  // 沉浸模式：隐藏全局底栏，避免训练中误触切换页面
+  function setWorkoutMode(on) {
+    document.body.classList.toggle("in-workout", !!on);
+    if (workoutDock) workoutDock.classList.toggle("hidden", !on);
+  }
 
   function openWorkout(dayId, date, resume) {
     var d = dayById(dayId);
     if (!d) return;
     var draft = getDraft(dayId, date, resume);
     if (draft.fresh) { delete draft.fresh; db.drafts[draft.key] = draft; }
-    var migrated = !!(getDraft.migration);
     if (!draft.startedAt) { draft.startedAt = Date.now(); }
     // 迁移或新建都可能改动草稿，统一落盘
     saveDB();
     wo = { draft: draft, timerId: null };
     TAB = "log";
+    setWorkoutMode(true);
     renderWorkout(d);
     window.scrollTo({ top: 0 });
   }
 
   function closeWorkout(save) {
     if (wo && wo.timerId) clearInterval(wo.timerId);
-    var f = view.querySelector(".fab");
-    if (f) f.remove();
     wo = null;
+    setWorkoutMode(false);
     if (save) saveDB();
     renderLog();
   }
@@ -646,14 +702,7 @@
     if (wo.timerId) clearInterval(wo.timerId);
     wo.timerId = setInterval(tick, 1000);
 
-    // 完成按钮：页面底部 + 悬浮按钮（长列表里不必滚到底）
-    var fin = el("button", "btn solid full", "完成本次训练");
-    fin.style.marginTop = "6px";
-    finishBtn = fin;
-    var fab = el("button", "fab", "完成训练");
-    fab.onclick = function () { finishWorkout(d); };
-    view.appendChild(fab);
-
+    // 完成/退出统一交给底部 dock，页面内不再重复放按钮
     // 勾选后实时刷新完成数与进度环
     var counter = function () {
       var c = countDone(dr);
@@ -672,16 +721,11 @@
     };
     counter();
     wo.counter = counter;
-    fin.addEventListener("click", function () { finishWorkout(d); });
-    view.appendChild(fin);
 
-    var back = el("button", "btn full outline", "保存并退出");
-    back.style.marginTop = "10px";
-    back.onclick = function () { closeWorkout(true); toast("已保存草稿"); };
-    view.appendChild(back);
+    // dock 按钮绑定到当前这次训练
+    woFinishBtn.onclick = function () { finishWorkout(d); };
+    woExitBtn.onclick = function () { closeWorkout(true); toast("已保存草稿"); };
   }
-
-  var finishBtn = null;
 
   function countDone(dr) {
     var done = 0, total = 0;
@@ -715,9 +759,8 @@
     delete db.drafts[dr.key];
     saveDB();
     if (wo.timerId) clearInterval(wo.timerId);
-    var fb = view.querySelector(".fab");
-    if (fb) fb.remove();
     wo = null;
+    setWorkoutMode(false);
     toast("训练已保存");
     renderLog();
   }
