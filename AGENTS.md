@@ -40,9 +40,9 @@ node tests/run.js --url=http://127.0.0.1:8765   # 对已启动的服务跑
 
 ## 关键约束
 
-- **Service Worker 策略**：`sw.js` 对同源 GET 走 **network-first**（3s 超时回退缓存），离线兜底靠 `ASSETS` 预缓存。改线上文件**不需要**手动改版本号，用户下次打开自动是新的；`CACHE`（当前 `gym4-v18`）只用于 `activate` 时清理旧缓存，仍建议递增。新增静态文件必须同步加入 `ASSETS`，否则离线时缺失（`offline` 用例会检查清单完整性）。
+- **Service Worker 策略**：`sw.js` 对同源 GET 走 **network-first**（3s 超时回退缓存），离线兜底靠 `ASSETS` 预缓存。改线上文件**不需要**手动改版本号，用户下次打开自动是新的；`CACHE`（当前 `gym4-v21`）只用于 `activate` 时清理旧缓存，仍建议递增。新增静态文件必须同步加入 `ASSETS`，否则离线时缺失（`offline` 用例会检查清单完整性）。**`activate` 的清理只删 `gym4-` 前缀的缓存**：Cache Storage 按 origin 隔离，线上 origin 是 `xhugh.github.io`（不止本应用路径），删掉同 origin 其他应用的缓存会让对方的离线能力失效。
 - **草稿不可覆盖**：草稿键为 `dayId@date`（`core.js` 的 `draftKey()`），同一天同一训练日只有一份。`getDraft()` 命中已有草稿时**一律续用**，绝不能覆盖——覆盖会丢掉用户已勾选的组（历史上出过这个 bug）。要丢弃用记录页草稿行的「✕」按钮。草稿的 `touched` 字段标记用户是否动过它：开了训练什么都没动就退出的空草稿会在渲染时清掉。**草稿身份只认 `dayId@date`**：导入的旧备份或手改 localStorage 可能把草稿存在别的键下，`core.js` 的 `normalizeDrafts()` 负责剔除坏草稿并把它们搬回规范键（`getDraft()` 也会按 `dayId+date` 兜底查找）。`finishWorkout()` 按规范键删除草稿，**不要用草稿对象自带的 `key` 字段**——它可能缺失，那样删的是 `drafts[undefined]`，草稿会留下来让同一份训练被重复完成、生成重复记录。
-- **训练计时**：`elapsedMs` 是累计活跃时长，`lastResumedAt` 是本次开始时刻。切后台/锁屏走 `visibilitychange` 暂停，计时不增长；**暂停后要 `saveDB()` 落盘**。**`pagehide` 也要落盘**（刷新/关闭/跳走都会触发）——只靠 `visibilitychange` 不够：从后台切回前台后计时继续走，这中间没有任何落盘时机，页面一刷新这段就白丢了。`openWorkout()` 恢复草稿时会把残留的 `lastResumedAt` 间隔并回 `elapsedMs`（上限 2 小时，隔夜重开不算 10 小时训练）。`durationMin` 由 `elapsedMs` 得出。
+- **训练计时**：`elapsedMs` 是累计活跃时长，`lastResumedAt` 是本次开始时刻。切后台/锁屏走 `visibilitychange` 暂停，计时不增长；**暂停后要 `saveDB()` 落盘**。**`pagehide` 也要落盘**（刷新/关闭/跳走都会触发）——只靠 `visibilitychange` 不够：从后台切回前台后计时继续走，这中间没有任何落盘时机，页面一刷新这段就白丢了。`openWorkout()` 恢复草稿时会把残留的 `lastResumedAt` 间隔并回 `elapsedMs`（上限 2 小时，隔夜重开不算 10 小时训练）。**旧草稿缺 `elapsedMs` 时从 0 起算**，不要按 `startedAt` 推算——旧草稿的 `startedAt` 可能是几天前，推算会把数天算成训练时长（曾实测显示 `4320:01`）并污染 `durationMin`。`durationMin` 由 `elapsedMs` 得出。
 - **HTML 转义**：`html` 不转义，只用于 `data.js` 等可信常量；动态数据（备注、动作名、导入内容）必须经 `esc()`。现有代码全部是 `html` + 显式 `esc`，照此处理。
 - **残缺记录**：`db.sessions` 里可能混有缺 `date`、缺 `moves`，或某个动作缺 `sets`/`sets` 里混了 `null` 的记录（旧版本遗留或手改 localStorage）。读记录一律走 `core.js` 的 `validSessions()` 过滤，不要直接遍历 `db.sessions` 再访问 `s.moves`——漏判一处就会整页崩。`validSessions()` 要同时校验 `moves`、每个动作的 `sets` 数组，以及 `sets` 里的元素是对象：消费端直接 `m.sets.forEach` 再读 `x.done`，只查 `moves` 挡不住「sets 缺」和 `sets:[null]`。草稿同理走 `validDraft()`：**它也必须校验 `sets` 里的元素是对象**（消费端 `countDone()` 读 `s.done`、`setRow()` 读 `s.weight`），只查 `moves` 和 `sets` 是数组挡不住 `sets:[null]`；坏草稿在记录页渲染时清掉，`getDraft()` 会按计划重建，不能让它崩掉整页或变成删不掉的僵尸。`progress.js` 统计页与 `log.js` 记录页都会显示「有 N 条记录格式异常已跳过」。
 - **容器类型校验**：`loadDB()` 负责把 `sessions`/`drafts` 的容器类型兜住——`sessions` 必须是数组、`drafts` 必须是普通对象，不满足就退化为空集合。`db.sessions.filter`、`delete db.drafts[k]` 遇到错类型会直接抛错（`Cannot delete property '0' of [object String]`），只判真值挡不住。跨标签页同步复用 `loadDB()`，自动受益。
@@ -54,6 +54,7 @@ node tests/run.js --url=http://127.0.0.1:8765   # 对已启动的服务跑
 - **记录定位以对象引用为准**：详情/编辑/删除都按被选中的记录对象本身定位（`indexOf`/`includes`），**不要用 `id` 匹配**——手改 localStorage 可能出现重复 `id`，按 id 过滤会把同 id 的记录一起删掉或改错。`validateDB()` 同时拒绝重复 id 的导入（双层防御）。`showSessionSheet` 兼容传 id 字符串（按第一条匹配，仅测试用），新入口一律传记录对象；编辑模式用 `state.wo.editingRef` 锚定打开时的那条记录。
 - **编辑有修改时 beforeunload 提示**：编辑历史记录期间任何修改入口都会置位 `state.wo.editDirty`，`beforeunload` 据此弹浏览器原生离开确认；未编辑或没改过就不弹。**编辑草稿仍然只存内存**（刷新/关页即丢，原记录无损，这是既定取舍）；iOS Safari 与 PWA 独立窗口对该提示支持有限，为已知限制。
 - **进度统计过滤未来日期**：`js/progress.js` 的 `countableSessions()` 过滤 `date > today()` 的记录，统计卡与两张图表共用过滤后的数组（未来日期只会来自手改/坏导入）；记录页历史列表**不走**此过滤，未来记录仍可查看。开始表单日期输入有 `max = today()` 与提交前双重校验，不能开始未来日期的训练。
+- **进度页空态必须留导入入口**：`js/progress.js` 的 `renderProgress()` 在没有可统计记录时走 `renderEmptyState()`，**空态仍然渲染「导入备份」按钮**——`importData()` 全仓只有这一个入口，清缓存/换设备后（本地库为空）若没它，手里的备份就没地方导入。空态文案按成因分叉：真没记录说「还没有数据」，记录结构异常说「格式异常已跳过」，记录完好但日期在未来说「晚于今天」——不能一律说「还没有数据」，否则用户以为记录丢了。本地确实一条记录都没有时不给导出按钮（没东西可导），有记录但都不可用时仍要给导出（坏数据卡提示「导出备份后手动清理」）。
 
 ## 图标
 
