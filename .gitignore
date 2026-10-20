@@ -3,3 +3,8 @@ node_modules/
 
 # codegraph 索引
 .codegraph/
+
+# 本地安装的 agent skills 目录（不随仓库分发）
+.opencode/
+.dsh/
+.omp/

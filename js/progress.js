@@ -34,10 +34,25 @@ export function aggregateByWeek(sessions, weeks) {
     if (cur) cur.value += v;
     else map.set(key, { label: fmtDate(key), value: v });
   });
-  const all = Array.from(map.entries())
-    .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+  const sorted = Array.from(map.entries())
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
     .map(e => e[1]);
-  return all.slice(-weeks);
+  if (!sorted.length) return [];
+
+  // 窗口：截至本周的最近 weeks 个自然周（周一起算），没有训练的周记 0。
+  // 停训的空档在图上是 0 柱，不再被悄悄跳过——等距排布下看不出停了几周。
+  const end = weekStart(new Date());
+  const window = [];
+  for (let i = weeks - 1; i >= 0; i--) {
+    const d = new Date(end);
+    d.setDate(d.getDate() - i * 7);
+    const key = dateStr(d);
+    const hit = map.get(key);
+    window.push({ label: fmtDate(key), value: hit ? hit.value : 0 });
+  }
+  if (window.some(w => w.value > 0)) return window;
+  // 窗口内一次都没练：回退到最近 weeks 个有训练的周，保证「有数据但图表空白」不会发生
+  return sorted.slice(-weeks);
 }
 
 // 进度统计口径：只计入日期不晚于今天的记录。
@@ -128,18 +143,19 @@ export function renderProgress(view, subEl) {
     <div class="stat"><b>${Math.round(vol / 1000 * 10) / 10}t</b><span>累计容量</span></div>`;
   view.appendChild(stats);
 
+  const volumeByWeek = aggregateByWeek(sessions, CHART_WEEKS);
   const c1 = el("div", "card");
   c1.innerHTML = html`
     <div class="card-title">📈 训练容量趋势</div>
-    <p class="card-sub">重量 × 次数，按自然周汇总（kg），最近 ${CHART_WEEKS} 周</p>`;
+    <p class="card-sub">重量 × 次数，按自然周汇总（kg），最近 ${volumeByWeek.length} 周</p>`;
   const cv1 = el("canvas");
   c1.appendChild(cv1);
   view.appendChild(c1);
-  drawBars(cv1, aggregateByWeek(sessions, CHART_WEEKS));
+  drawBars(cv1, volumeByWeek);
 
   const c2 = el("div", "card");
   c2.innerHTML = html`
-    <div class="card-title">🏆 主项最佳组</div>
+    <div class="card-title">🏆 各动作最佳组</div>
     <p class="card-sub">每个动作历史最重的有效组（重量 × 次数）</p>`;
   const best = {};
   sessions.forEach(s => s.moves.forEach(m => (m.sets || []).forEach(x => {
@@ -242,7 +258,8 @@ export function drawBars(canvas, data, opt = {}) {
 function paintBars(canvas, data, opt) {
   const dpr = window.devicePixelRatio || 1;
   const W = canvas.clientWidth || 320;
-  const H = 180;
+  // 高度取 canvas 的实际 CSS 高度（样式表里是 190px），写死 180 会让每张图纵向拉伸 5.6%
+  const H = canvas.clientHeight || 190;
   canvas.width = W * dpr;
   canvas.height = H * dpr;
   const ctx = canvas.getContext("2d");
@@ -282,9 +299,12 @@ function paintBars(canvas, data, opt) {
     ctx.fillText(v > 999 ? (v / 1000).toFixed(1) + "k" : v, padL - 6, y + 3);
   }
 
+  let lastLabel = -Infinity;
   data.forEach((d, i) => {
     const x = padL + gap * i + (gap - bw) / 2;
-    const h = ch * (d.value / max);
+    // 超出量程的值（手改/坏导入）按量程截断，不让柱子画出图表区域
+    const val = Math.max(0, Math.min(max, d.value || 0));
+    const h = ch * (val / max);
     const y = padT + ch - h;
     if (opt.colorDanger && d.value >= 4) {
       const g = ctx.createLinearGradient(x, y, x, y + Math.max(h, 1));
@@ -301,13 +321,26 @@ function paintBars(canvas, data, opt) {
     }
     roundRect(ctx, x, y, bw, Math.max(h, 1), 4);
     ctx.fill();
-    if (i % labelEvery === 0 || i === n - 1) {
+    // 末位标签与前一个画过的标签太近时不再画，否则会叠字
+    if (i % labelEvery === 0 || (i === n - 1 && i - lastLabel >= labelEvery)) {
       ctx.fillStyle = cMuted;
       ctx.textAlign = "center";
       ctx.fillText(d.label, x + bw / 2, H - 6);
+      lastLabel = i;
     }
   });
 }
+
+// 视口尺寸变化后按新尺寸重绘：位图缓冲只在绘制时算一次，
+// 不重绘的话会被 CSS 拉伸变形（手机横屏、桌面缩放）。
+let resizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    charts = charts.filter(c => c.canvas.isConnected);
+    charts.forEach(c => paintBars(c.canvas, c.data, c.opt));
+  }, 120);
+});
 
 // 主题切换后重画（配色变了，图形本身不变）
 document.addEventListener("themechange", () => {
@@ -351,6 +384,13 @@ export function validateDB(d) {
         if (!m || typeof m.name !== "string" || !Array.isArray(m.sets)) return `草稿 ${k} 的动作数据无效`;
         for (const st of m.sets) {
           if (!st || typeof st !== "object") return `草稿 ${k} 有无效的组`;
+        }
+        // 计时字段必须是数字：坏值会让计时器显示 NaN、写进记录的时长变成 null
+        for (const f of ["elapsedMs", "lastResumedAt"]) {
+          const v = dr[f];
+          if (v != null && (typeof v !== "number" || !Number.isFinite(v))) {
+            return `草稿 ${k} 的 ${f} 必须是数字`;
+          }
         }
       }
     }
@@ -404,7 +444,8 @@ export function importData() {
       // 先校验再写盘：坏数据不许进本地库
       const bad = validateDB(d);
       if (bad) { toast("导入失败：" + bad); return; }
-      if (!confirm(`导入会覆盖当前所有记录（${db.sessions.length} 条），确定？`)) return;
+      // 导入会同时替换记录与草稿，确认框要把两样都说清楚
+      if (!confirm(`导入会覆盖当前所有记录（${db.sessions.length} 条）与未完成的训练草稿，确定？`)) return;
       const prev = { sessions: db.sessions, drafts: db.drafts };
       db.sessions = d.sessions;
       db.drafts = d.drafts || {};

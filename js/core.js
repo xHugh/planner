@@ -136,6 +136,7 @@ export function applyTheme(mode, announce) {
     meta.setAttribute("name", "theme-color");
     document.head.appendChild(meta);
   }
+  // theme-color 的取值要与 index.html 首屏内联脚本保持一致（两边都要改）
   meta.setAttribute("content", dark ? "#080d16" : "#eef2f8");
   // 图表等按 CSS 变量着色的元素需要重画
   document.dispatchEvent(new CustomEvent("themechange"));
@@ -218,17 +219,35 @@ export const draftKey = (dayId, date) => dayId + "@" + date;
 // 草稿身份归一化：结构坏的直接剔除，键不唯一的搬到 dayId@date 规范键下。
 // 键不唯一会让「继续」打开空表单（getDraft 按规范键查不到）、让完成训练删不掉草稿
 // （finishWorkout 按 dr.key 删，删成了 drafts[undefined]），进而重复生成记录。
-export function normalizeDrafts() {
+//
+// 抽成纯函数：传入草稿容器，返回归一化后的容器与是否变化的标记，调用方自己决定要不要替换。
+// 草稿对象保持引用（只补 key 字段）——训练中的草稿正靠这个引用与 db.drafts 保持同步，
+// 换成副本会让训练页的改动写不回本地库。
+export function normalizeDraftMap(drafts) {
   const out = {};
   let changed = false;
-  Object.keys(db.drafts).forEach(k => {
-    const dr = db.drafts[k];
+  const canonical = new Set();   // 已经被规范键占用的身份
+  Object.keys(drafts).forEach(k => {
+    const dr = drafts[k];
     if (!validDraft(dr)) { changed = true; return; }
     const nk = draftKey(dr.dayId, dr.date);
     if (k !== nk || dr.key !== nk) changed = true;
     dr.key = nk;
+    if (out[nk]) {
+      // 同一身份出现两份：规范键下的那份优先，
+      // 否则「继续」打开的是哪一份会取决于键的插入顺序。
+      if (k === nk) { out[nk] = dr; canonical.add(nk); }
+      return;
+    }
     out[nk] = dr;
+    if (k === nk) canonical.add(nk);
   });
+  return { out, changed };
+}
+
+// 直接作用于 db.drafts 的包装：返回是否发生过归一化
+export function normalizeDrafts() {
+  const { out, changed } = normalizeDraftMap(db.drafts);
   db.drafts = out;
   return changed;
 }
@@ -320,6 +339,12 @@ document.addEventListener("keydown", e => {
   const f = sheet.querySelectorAll("button, a[href], input, select, [tabindex]:not([tabindex='-1'])");
   if (!f.length) return;
   const first = f[0], last = f[f.length - 1];
+  // 焦点在弹层之外：aria-modal="true" 承诺键盘焦点留在弹层内，先把它拉回来
+  if (!sheet.contains(document.activeElement)) {
+    e.preventDefault();
+    first.focus();
+    return;
+  }
   if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
   else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 });

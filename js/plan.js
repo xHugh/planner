@@ -52,7 +52,7 @@ export function renderPlan(view, subEl) {
   });
   view.appendChild(week);
 
-  view.appendChild(el("div", "section-h", "5 个训练日"));
+  view.appendChild(el("div", "section-h", `${PLAN.days.length} 个训练日`));
   PLAN.days.forEach(d => {
     const doneCount = countSessionsOfDay(d.id);
     const c = el("div", "card");

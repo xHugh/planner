@@ -13,7 +13,9 @@ const os = require("os");
 
 const ROOT = path.join(__dirname, "..");
 const args = process.argv.slice(2);
-const port = Number(args.find(a => /^\d+$/.test(a))) || 8765;
+// 端口 0 交由系统分配随机端口，不能被 || 当成假值吞掉
+const portArg = args.find(a => /^\d+$/.test(a));
+const port = portArg !== undefined && Number.isInteger(Number(portArg)) ? Number(portArg) : 8765;
 const allInterfaces = args.includes("--host");
 
 const MIME = {

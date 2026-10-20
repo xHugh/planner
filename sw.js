@@ -29,7 +29,13 @@ var TIMEOUT = 3000;
 self.addEventListener("install", function (e) {
   e.waitUntil(
     caches.open(CACHE).then(function (c) {
-      return c.addAll(ASSETS);
+      // 逐条写入：addAll 是全有全无的，一条失效就整批失败，
+      // Service Worker 装不上、离线能力静默消失（页面仍能用，因为是 network-first）
+      return Promise.all(ASSETS.map(function (u) {
+        return c.add(u).catch(function (err) {
+          console.warn("[sw] 预缓存失败：", u, err);
+        });
+      }));
     }).then(function () { return self.skipWaiting(); })
   );
 });

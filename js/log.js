@@ -23,6 +23,29 @@ export function sessionsOfDay(dayId) {
   return validSessions().filter(s => s.dayId === dayId);
 }
 
+// 记录签名：id + 日期 + 训练日 + 动作数 + 总组数。
+// 用来在对象引用失效后辨认「还是同一条记录」——重复 id 的两条记录靠日期/组数区分。
+function sessionSignature(s) {
+  if (!s) return "";
+  const moves = Array.isArray(s.moves) ? s.moves : [];
+  const sets = moves.reduce((n, m) => n + (Array.isArray(m.sets) ? m.sets.length : 0), 0);
+  return [s.id, s.date, s.dayId, moves.length, sets].join("|");
+}
+
+// 定位一条记录：优先按对象引用（重复 id 时也只影响被选中的那一条）；
+// 引用因跨标签页整量替换而失效时，按签名找回同一条，签名命中不唯一就不猜。
+// 返回 { s, idx }，找不到返回 null。
+export function resolveSession(s) {
+  if (!s) return null;
+  const idx = db.sessions.indexOf(s);
+  if (idx >= 0) return { s, idx };
+  const sig = sessionSignature(s);
+  const cands = db.sessions.filter(x => x && sessionSignature(x) === sig);
+  if (cands.length !== 1) return null;
+  const i = db.sessions.indexOf(cands[0]);
+  return i >= 0 ? { s: cands[0], idx: i } : null;
+}
+
 export function emptyMoves(day, date) {
   return day.moves.map((m, mi) => {
     const prev = lastEntry(m.name, date);
@@ -299,11 +322,12 @@ export function showSessionSheet(target) {
   const delBtn = el("button", "btn danger full", "删除这条记录");
   delBtn.onclick = () => {
     if (!confirm(`删除 ${fmtDate(s.date)} 的这条训练记录？此操作不可撤销。`)) return;
-    // 按被选中的对象定位：重复 id（手改数据）时按 id 过滤会把同 id 的记录一起删掉
-    const idx = db.sessions.indexOf(s);
-    if (idx < 0) { closeSheet(); toast("这条记录已经不在了"); return; }
-    db.sessions.splice(idx, 1);
-    if (!saveDB()) { db.sessions.splice(idx, 0, s); return; }
+    // 按被选中的对象定位：重复 id（手改数据）时按 id 过滤会把同 id 的记录一起删掉。
+    // 引用失效（跨标签页整量替换过 db.sessions）时按签名找回同一条。
+    const hit = resolveSession(s);
+    if (!hit) { closeSheet(); toast("这条记录已经不在了"); return; }
+    db.sessions.splice(hit.idx, 1);
+    if (!saveDB()) { db.sessions.splice(hit.idx, 0, hit.s); return; }
     closeSheet();
     goLog();
     toast("已删除");
@@ -321,7 +345,7 @@ export const state = { wo: null };
 // 已知限制：iOS Safari 与 PWA 独立窗口对该提示支持有限（方案选择时已确认接受）。
 window.addEventListener("beforeunload", e => {
   const wo = state.wo;
-  if (wo && wo.editingId && wo.editDirty) {
+  if (wo && wo.isEdit && wo.editDirty) {
     e.preventDefault();
     e.returnValue = "";
   }
@@ -410,6 +434,14 @@ document.addEventListener("visibilitychange", () => {
   } else { resumeClock(state.wo.draft); startTimer(); }
 });
 
+// 页面从往返缓存恢复时不会触发 visibilitychange，计时会停在恢复前的读数上。
+// 本应用没有出站导航，往返缓存场景少见，按稳健性补丁处理。
+window.addEventListener("pageshow", e => {
+  if (!state.wo || !e.persisted) return;
+  resumeClock(state.wo.draft);
+  startTimer();
+});
+
 // 刷新 / 关闭 / 跳走都会触发 pagehide：把当前累计时长落盘。
 // 只靠 visibilitychange 不够——从后台切回前台后计时继续走，
 // 但这中间没有任何落盘时机，页面一刷新这段时间就白丢了。
@@ -445,6 +477,10 @@ export function openWorkout(dayId, date, opts) {
   }
   const o = opts || {};
   let draft, editingId = null;
+  // isEdit：这次是不是「编辑已有记录」。不能用 editingId 的真值判断——
+  // 记录可能没有 id（手改 localStorage），那时 editingId 是 undefined，
+  // 会被误判成新建训练，保存时生成一条重复记录。
+  const isEdit = !!o.session;
 
   if (o.session) {
     // 编辑已完成的记录：草稿只存在内存，保存前不落盘
@@ -493,6 +529,12 @@ export function openWorkout(dayId, date, opts) {
     if (draft.elapsedMs == null) draft.elapsedMs = 0;
     if (draft.touched == null) draft.touched = true;
   }
+  // 计时字段按数值归一：字符串等坏值降级为「没累计过 / 没在计时」，
+  // 否则计时器会显示 NaN:NaN，写进记录的 durationMin 也会变成 null（时长丢失）。
+  const elapsed = +draft.elapsedMs;
+  draft.elapsedMs = Number.isFinite(elapsed) && elapsed >= 0 ? elapsed : 0;
+  const resumed = +draft.lastResumedAt;
+  draft.lastResumedAt = (draft.lastResumedAt != null && Number.isFinite(resumed)) ? resumed : null;
   draft.pain = snapPain(draft.pain);
   // 训练级 RIR 归一为数字：旧草稿、手改 localStorage 或旧版逐动作字段都可能是字符串，
   // 不归一会让训练页无一档选中（chips() 用 === 比较），完成训练时又把字符串写进记录与导出备份。
@@ -507,10 +549,10 @@ export function openWorkout(dayId, date, opts) {
     draft.lastResumedAt = null;
   }
   resumeClock(draft);
-  if (!editingId) saveDB();
+  if (!isEdit) saveDB();
   // editingRef：编辑锚定打开时的那条记录对象本身（重复 id 手改数据时不误伤别的记录）
   // editDirty：本次编辑是否改过任何字段，供 beforeunload 决定是否提示离开
-  state.wo = { draft, timerId: null, editingId, editingRef: o.session || null, editDirty: false };
+  state.wo = { draft, timerId: null, isEdit, editingId, editingRef: o.session || null, editDirty: false };
   setWorkoutMode(true);
   renderWorkout(d);
   window.scrollTo({ top: 0 });
@@ -676,11 +718,11 @@ export function renderWorkout(d) {
   counter();
   wo.counter = counter;
 
-  woFinishBtn.textContent = wo.editingId ? "保存修改" : "完成训练";
-  woExitBtn.textContent = wo.editingId ? "放弃修改" : "保存并退出";
+  woFinishBtn.textContent = wo.isEdit ? "保存修改" : "完成训练";
+  woExitBtn.textContent = wo.isEdit ? "放弃修改" : "保存并退出";
   woFinishBtn.onclick = () => finishWorkout(d);
   woExitBtn.onclick = () => {
-    if (wo.editingId) { closeWorkout(false); toast("已放弃修改"); return; }
+    if (wo.isEdit) { closeWorkout(false); toast("已放弃修改"); return; }
     const hasContent = dr.touched === true || countDone(dr).done > 0;
     if (!closeWorkout(true)) return;
     toast(hasContent ? "已保存草稿" : "这次没有记录任何内容");
@@ -718,21 +760,21 @@ export function finishWorkout(d) {
     return out;
   });
 
-  if (wo.editingId) {
+  if (wo.isEdit) {
     // 编辑模式：覆盖原记录，id 与时长保持不变
     if (!confirm(`保存修改？将更新 ${fmtDate(dr.date)} 的这条记录。`)) { cancelClock(); return; }
-    // 按打开编辑时的记录对象定位；对象不在当前数组（跨标签页同步替换过）走既有提示
-    const idx = db.sessions.indexOf(wo.editingRef);
-    if (idx < 0) { toast("这条记录已经不在了"); cancelClock(); return; }
-    const before = db.sessions[idx];
-    db.sessions[idx] = {
+    // 按打开编辑时的记录对象定位；对象不在当前数组（跨标签页同步替换过）时按签名找回
+    const hit = resolveSession(wo.editingRef);
+    if (!hit) { toast("这条记录已经不在了"); cancelClock(); return; }
+    const before = hit.s;
+    db.sessions[hit.idx] = {
       ...before,
       date: dr.date, moves,
       rir: dr.rir ?? 2,
       maxPain: Math.max(dr.pain || 0, legacyPain),
       note: dr.note || "",
     };
-    if (!saveDB()) { db.sessions[idx] = before; cancelClock(); return; }
+    if (!saveDB()) { db.sessions[hit.idx] = before; cancelClock(); return; }
     stopTimer();
     state.wo = null;
     setWorkoutMode(false);
@@ -743,7 +785,8 @@ export function finishWorkout(d) {
 
   if (!confirm(`完成这次训练？已完成 ${c.done}/${c.total} 组`)) { cancelClock(); return; }
 
-  const duration = Math.round(elapsedOf(dr) / 60000);
+  const rawDuration = Math.round(elapsedOf(dr) / 60000);
+  const duration = Number.isFinite(rawDuration) ? rawDuration : 1;
   db.sessions.push({
     id: uid(), dayId: d.id, date: dr.date, startedAt: dr.startedAt,
     durationMin: Math.max(duration, 1), moves,
