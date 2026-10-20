@@ -56,17 +56,16 @@ document.addEventListener("navigate", e => {
 let warnedOtherTab = false;
 window.addEventListener("storage", e => {
   if (e.key !== "gym4.db.v1" || !e.newValue) return;
+  const fresh = loadDB();
   if (state.wo) {
     // 去重按 id：loadDB() 每次 JSON.parse 都产生全新对象，引用比较（includes）对内存里
     // 已有的记录也永远返回 false，会把已有记录再 push 一遍造成同 id 记录翻倍。
-    const fresh = loadDB();
     const have = new Set(db.sessions.map(s => s.id));
     fresh.sessions.forEach(s => { if (s && !have.has(s.id)) { db.sessions.push(s); have.add(s.id); } });
     if (!warnedOtherTab) { warnedOtherTab = true; toast("另一个标签页改了数据，已并入这次的记录"); }
     return;
   }
   warnedOtherTab = false;
-  const fresh = loadDB();
   db.sessions = fresh.sessions;
   db.drafts = fresh.drafts;
   // 另一个标签页写来的草稿键未必规范，归一化后再渲染

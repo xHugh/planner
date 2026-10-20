@@ -80,9 +80,6 @@ export function getDraft(dayId, date) {
     if (dr.pain == null) dr.pain = legacyPain;
     if (!dr.note) dr.note = legacyNote;
   }
-  // 训练级 RIR 归一为数字：旧草稿、手改 localStorage 或旧版逐动作字段都可能是字符串，
-  // 不归一会让训练页无一档选中，完成训练时又把字符串写进记录与导出备份。
-  dr.rir = snapInt(dr.rir, 2);
   return dr;
 }
 
@@ -116,14 +113,6 @@ function snapPain(v) {
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(10, n % 2 === 1 ? n + 1 : n));
 }
-// RIR 等整数字段的类型归一，与 snapPain 对称：旧草稿或手改数据可能是字符串
-// （chips() 用 === 比较，字符串会让所有档位落空，finishWorkout 又会原样写回，
-//  产出连 validateDB 都拒绝的备份）。非有效数字一律落到默认值。
-function snapInt(v, fallback) {
-  const n = +v;
-  return Number.isFinite(n) ? n : fallback;
-}
-
 /* ---------------- 记录页 ---------------- */
 export function renderLog(view, subEl) {
   view.innerHTML = "";
@@ -505,9 +494,10 @@ export function openWorkout(dayId, date, opts) {
     if (draft.touched == null) draft.touched = true;
   }
   draft.pain = snapPain(draft.pain);
-  // 训练级 RIR 归一并覆盖编辑入口：记录的 rir 可能来自旧数据，虽是数字也可能是字符串，
-  // 与 getDraft 走同一个归一，保证训练页有档位可选、保存后写回的是数字。
-  draft.rir = snapInt(draft.rir, 2);
+  // 训练级 RIR 归一为数字：旧草稿、手改 localStorage 或旧版逐动作字段都可能是字符串，
+  // 不归一会让训练页无一档选中（chips() 用 === 比较），完成训练时又把字符串写进记录与导出备份。
+  const rir = +draft.rir;
+  draft.rir = Number.isFinite(rir) ? rir : 2;
   // 草稿里还留着上次计时的起点（页面被刷新/关掉，来不及落盘）：
   // 把这段间隔并进已累计时长，否则恢复后计时会从零重来。
   // 上限 2 小时：隔夜再打开 App 不该被记成 10 小时训练。

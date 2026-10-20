@@ -433,10 +433,7 @@ const SUITES = [
       await page.waitForTimeout(700);
 
       // 归一前这里会是 0 档选中：字符串 "2" !== 数字 2
-      const rirOn = await page.evaluate(() => {
-        const c = document.querySelectorAll(".wo-summary .chips")[0];
-        return [...c.querySelectorAll(".pick.on")].map(x => x.textContent);
-      });
+      const rirOn = await page.locator(".wo-summary .chips").nth(0).locator(".pick.on").allInnerTexts();
       t.eq(rirOn.length, 1, "字符串 RIR 打开后恰有一档选中：" + JSON.stringify(rirOn));
       t.eq(rirOn[0], "RIR 2", "选中的是对应的那一档");
 
@@ -470,10 +467,7 @@ const SUITES = [
       await page.waitForTimeout(400);
       await page.click('#sheetFooter button:has-text("编辑这条记录")');
       await page.waitForTimeout(700);
-      const editOn = await page.evaluate(() => {
-        const c = document.querySelectorAll(".wo-summary .chips")[0];
-        return [...c.querySelectorAll(".pick.on")].map(x => x.textContent);
-      });
+      const editOn = await page.locator(".wo-summary .chips").nth(0).locator(".pick.on").allInnerTexts();
       t.eq(editOn.length, 1, "编辑字符串 RIR 的记录后恰有一档选中：" + JSON.stringify(editOn));
       await page.click("#woFinishBtn");
       await page.waitForTimeout(800);
