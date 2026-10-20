@@ -771,6 +771,50 @@ const SUITES = [
   },
 
   {
+    // 旧草稿（计时功能上线前创建）没有已累计时长字段：
+    // 恢复时不能按 startedAt 推算，否则数天的间隔会被算成训练时长
+    name: "workout · 旧草稿时长从 0 起算",
+    async run(page, t, base) {
+      await page.goto(base, { waitUntil: "networkidle" });
+      await page.evaluate(() => {
+        const z = n => String(n).padStart(2, "0");
+        const d = new Date();
+        const date = d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate());
+        localStorage.setItem("gym4.db.v1", JSON.stringify({
+          sessions: [],
+          drafts: {
+            ["w1@" + date]: {
+              key: "w1@" + date, dayId: "w1", date,
+              startedAt: Date.now() - 3 * 24 * 3600 * 1000, // 3 天前开始
+              touched: true, rir: 2, pain: 0, note: "",
+              moves: [{ index: 0, name: "坐姿推胸机", sets: [{ weight: "60", reps: "10", done: true }] }],
+            },
+          },
+        }));
+      });
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(500);
+      await page.click('.nav-btn[data-tab="log"]');
+      await page.waitForTimeout(500);
+      await page.locator("#view .row-tap").first().click();
+      await page.waitForTimeout(800);
+
+      const shown = await page.locator("#woDockTimer").innerText();
+      const toSec = s => +s.slice(0, 2) * 60 + +s.slice(3);
+      t.ok(toSec(shown) < 60, `旧草稿恢复后时长从 0 起算（显示 ${shown}）`);
+
+      // 完成训练：写入记录的时长必须与实际操作一致，不能是数天
+      await page.click("#woFinishBtn");
+      await page.waitForTimeout(700);
+      const dur = await page.evaluate(() => {
+        const s = JSON.parse(localStorage.getItem("gym4.db.v1")).sessions[0];
+        return s && s.durationMin;
+      });
+      t.eq(dur, 1, `写入记录的时长为 1 分钟（实得 ${dur}）`);
+    },
+  },
+
+  {
     name: "workout · 编辑有修改离开提示",
     async run(page, t, base) {
       await page.goto(base, { waitUntil: "networkidle" });
@@ -1181,6 +1225,85 @@ const SUITES = [
   },
 
   {
+    name: "progress · 空态仍可导入备份",
+    async run(page, t, base) {
+      await page.goto(base, { waitUntil: "networkidle" });
+
+      // 本地一条记录都没有：空态必须留有导入入口，
+      // 否则清缓存/换设备后手里的备份没地方导入
+      await page.evaluate(() => localStorage.setItem("gym4.db.v1", JSON.stringify({ sessions: [], drafts: {} })));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(400);
+      await page.click('.nav-btn[data-tab="progress"]');
+      await page.waitForTimeout(500);
+
+      const emptyBtns = await page.evaluate(() =>
+        [...document.querySelectorAll("#view button")].map(b => b.innerText.trim()));
+      t.ok(emptyBtns.some(b => b.includes("导入")), "空库时进度页有导入入口：" + JSON.stringify(emptyBtns));
+      t.ok(!emptyBtns.some(b => b.includes("导出")), "空库时没有可导出的内容，不给导出按钮");
+
+      // 真的走一次导入：备份文件 → 记录写入 → 统计按备份渲染
+      const fsMod = require("fs");
+      const backupFile = path.join("/tmp", `gym4-empty-import-${process.pid}.json`);
+      fsMod.writeFileSync(backupFile, JSON.stringify({
+        sessions: [{ id: "imp1", dayId: "w1", date: "2026-01-05", durationMin: 40, maxPain: 0, rir: 2, note: "",
+          moves: [{ name: "坐姿推胸机", sets: [{ weight: "80", reps: "9", done: true }] }] }],
+        drafts: {},
+      }));
+      // 导入前的覆盖确认框由主流程注册的全局 dialog handler 接受
+      const [fc] = await Promise.all([
+        page.waitForEvent("filechooser"),
+        page.click('#view button:has-text("导入备份")'),
+      ]);
+      await fc.setFiles(backupFile);
+      await page.waitForTimeout(700);
+      const imported = await page.evaluate(() =>
+        JSON.parse(localStorage.getItem("gym4.db.v1")).sessions.map(s => s.id));
+      t.eq(imported.length, 1, "空库也能成功导入备份");
+      t.eq(imported[0], "imp1", "导入的是备份里的记录");
+      t.ok((await page.locator("#view .stat").count()) >= 3, "导入后进度页按备份渲染统计");
+      fsMod.unlinkSync(backupFile);
+
+      // 记录全都被过滤（结构异常）：不得说「还没有数据」，且仍要有导入入口
+      await page.evaluate(() => {
+        localStorage.setItem("gym4.db.v1", JSON.stringify({
+          sessions: [
+            { id: "b1", dayId: "w1", date: "2026-01-01", durationMin: 40 },
+            { id: "b2", dayId: "w2", date: "2026-01-02", durationMin: 40 },
+          ], drafts: {},
+        }));
+      });
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(400);
+      await page.click('.nav-btn[data-tab="progress"]');
+      await page.waitForTimeout(500);
+      const brokenText = await page.locator("#view").innerText();
+      t.ok(!brokenText.includes("还没有数据"), "记录格式异常时不显示「还没有数据」");
+      t.ok(brokenText.includes("格式异常"), "说明是格式异常：" + brokenText.replace(/\s+/g, " ").slice(0, 60));
+      t.ok((await page.locator('#view button:has-text("导入备份")').count()) === 1, "全坏数据时导入入口仍在");
+
+      // 记录本身完好、只是日期都在未来：同样不得说「还没有数据」
+      await page.evaluate(() => {
+        const z = n => String(n).padStart(2, "0");
+        const d = new Date(); d.setDate(d.getDate() + 7);
+        const future = d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate());
+        localStorage.setItem("gym4.db.v1", JSON.stringify({
+          sessions: [{ id: "f1", dayId: "w1", date: future, durationMin: 40, maxPain: 0, rir: 2, note: "",
+            moves: [{ name: "坐姿推胸机", sets: [{ weight: "80", reps: "9", done: true }] }] }],
+          drafts: {},
+        }));
+      });
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(400);
+      await page.click('.nav-btn[data-tab="progress"]');
+      await page.waitForTimeout(500);
+      const futureText = await page.locator("#view").innerText();
+      t.ok(!futureText.includes("还没有数据"), "记录日期都在未来时不显示「还没有数据」");
+      t.ok(futureText.includes("晚于今天"), "说明是日期晚于今天：" + futureText.replace(/\s+/g, " ").slice(0, 60));
+    },
+  },
+
+  {
     name: "offline · 离线可用",
     async run(page, t, base) {
       await page.goto(base, { waitUntil: "networkidle" });
@@ -1223,6 +1346,59 @@ const SUITES = [
       t.eq(await page.locator(".hero h2").innerText().catch(() => "FAIL"), plan.name, "断网后仍能打开");
       t.eq(await page.locator(".daychip").count(), 7, "断网后周安排正常");
       await page.context().setOffline(false);
+    },
+  },
+
+  {
+    // 缓存清理只能删本应用的：Cache Storage 按 origin 隔离，
+    // 同 origin 上其他应用（旧版 CACHE 名）的缓存不属于本应用，删掉会让对方离线失效
+    name: "offline · 缓存清理只影响本应用",
+    async run(page, t, base) {
+      await page.goto(base, { waitUntil: "networkidle" });
+      await page.waitForFunction(async () => {
+        const r = await navigator.serviceWorker.getRegistration();
+        return r && r.active && r.active.state === "activated";
+      }, null, { timeout: 30000 });
+      await page.waitForTimeout(1500);
+
+      const cur = await page.evaluate(async () => {
+        const k = await caches.keys();
+        return k.find(x => x.indexOf("gym4-") === 0) || null;
+      });
+      t.ok(cur, "本应用缓存已建立：" + cur);
+
+      // 造两个缓存：其他应用的 + 本应用的旧版本
+      await page.evaluate(async () => {
+        const other = await caches.open("other-app-v1");
+        await other.put("/other", new Response("other-app-data"));
+        const old = await caches.open("gym4-v01");
+        await old.put("/old", new Response("old"));
+      });
+
+      // 换 script URL 重新注册，触发一次新的 install → activate
+      await page.evaluate(async () => {
+        const reg = await navigator.serviceWorker.register("sw.js?probe=2");
+        await navigator.serviceWorker.ready;
+        const w = reg.installing || reg.waiting || reg.active;
+        if (w && w.state !== "activated") {
+          await new Promise(res => {
+            const h = () => { if (w.state === "activated") { w.removeEventListener("statechange", h); res(); } };
+            w.addEventListener("statechange", h);
+          });
+        }
+      });
+      await page.waitForTimeout(1500);
+
+      const keys = await page.evaluate(() => caches.keys());
+      t.ok(keys.includes("other-app-v1"), "其他应用的缓存没有被删：" + JSON.stringify(keys));
+      const otherData = await page.evaluate(async () => {
+        const c = await caches.open("other-app-v1");
+        const r = await c.match("/other");
+        return r ? await r.text() : "MISSING";
+      });
+      t.eq(otherData, "other-app-data", "其他应用的缓存内容未被改动");
+      t.ok(!keys.includes("gym4-v01"), "本应用的旧版本缓存被清理：" + JSON.stringify(keys));
+      t.ok(keys.includes(cur), "本应用当前版本的缓存保留");
     },
   },
 
