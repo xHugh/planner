@@ -48,6 +48,47 @@ export function countableSessions(sessions) {
   return sessions.filter(s => s.date <= td);
 }
 
+/* ---------------- 空态 ---------------- */
+// 没有可统计的记录时，按「为什么没有」分三种说法，而不是笼统一句「还没有数据」：
+//   total=0        本机确实一条记录都没有
+//   broken>0       记录存在但结构异常，全部被跳过
+//   future>0       记录本身完好，但训练日期晚于今天，不进统计
+// 无论哪种都保留导入入口：清缓存、换设备后手里有备份却没地方导入，是最需要它的场景。
+function renderEmptyState(view, info) {
+  if (info.broken > 0) {
+    view.appendChild(brokenCard(info.broken));
+  }
+
+  let msg;
+  if (info.total === 0) {
+    msg = "还没有数据。<br>完成一次训练后，这里会出现进度图表。";
+  } else if (info.broken > 0 && info.future > 0) {
+    msg = `本地 ${info.broken} 条记录格式异常已跳过，<br>另有 ${info.future} 条日期晚于今天，暂不计入统计。`;
+  } else if (info.broken > 0) {
+    msg = "没有可统计的训练记录。<br>本地记录格式异常，已全部跳过。";
+  } else if (info.future > 0) {
+    msg = `有 ${info.future} 条记录的日期晚于今天，<br>暂不计入统计。`;
+  } else {
+    msg = "还没有可统计的数据。";
+  }
+  view.appendChild(el("div", "empty", msg));
+
+  // 导入入口：空库时恢复备份的唯一路径，不要求先造一条记录
+  const imp = el("button", "btn outline full", "⬆ 导入备份（JSON）");
+  imp.style.marginTop = "12px";
+  imp.onclick = importData;
+  view.appendChild(imp);
+
+  // 本地确实一条记录都没有时没什么可导出的，不给导出按钮；
+  // 有记录但都不可用时仍要能导出来手工清理（坏数据卡也是这么说的）
+  if (info.total > 0) {
+    const exp = el("button", "btn outline full", "⬇ 导出数据（JSON）");
+    exp.style.marginTop = "6px";
+    exp.onclick = exportData;
+    view.appendChild(exp);
+  }
+}
+
 /* ---------------- 页面 ---------------- */
 let active = false;
 
@@ -63,7 +104,11 @@ export function renderProgress(view, subEl) {
   const sessions = countableSessions(valid).sort((a, b) => (a.date < b.date ? -1 : 1));
 
   if (!sessions.length) {
-    view.appendChild(el("div", "empty", "还没有数据。<br>完成一次训练后，这里会出现进度图表。"));
+    renderEmptyState(view, {
+      total: db.sessions.length,
+      broken,
+      future: valid.length - sessions.length,
+    });
     return;
   }
   if (broken) view.appendChild(brokenCard(broken));
