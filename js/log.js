@@ -456,7 +456,11 @@ export function openWorkout(dayId, date, opts) {
   } else {
     draft = getDraft(dayId, date);
     if (!draft.startedAt) draft.startedAt = Date.now();
-    if (draft.elapsedMs == null) draft.elapsedMs = Math.max(0, Date.now() - draft.startedAt);
+    // 旧草稿（计时功能上线前创建、或外部导入的）没有已累计时长字段。
+    // 这时没有任何可信的累计依据，从 0 起算：曾经按 startedAt 推算，
+    // 会把「草稿创建至今」的数天间隔算成训练时长（实测显示 4320:01），
+    // 完成训练时还会把这段错值写进 durationMin 污染统计。
+    if (draft.elapsedMs == null) draft.elapsedMs = 0;
     if (draft.touched == null) draft.touched = true;
   }
   draft.pain = snapPain(draft.pain);
