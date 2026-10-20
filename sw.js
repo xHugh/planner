@@ -2,7 +2,8 @@
    策略：同源 GET 一律 network-first（3s 超时回退缓存）。
    好处是改了线上文件不用手动改版本号，用户下次打开就是新的；
    CACHE 只用于 activate 时清理旧缓存，以及离线时兜底。 */
-var CACHE = "gym4-v20";
+var CACHE = "gym4-v21";
+var CACHE_PREFIX = "gym4-";
 var ASSETS = [
   "./",
   "./index.html",
@@ -36,7 +37,12 @@ self.addEventListener("install", function (e) {
 self.addEventListener("activate", function (e) {
   e.waitUntil(
     caches.keys().then(function (keys) {
-      return Promise.all(keys.filter(function (k) { return k !== CACHE; }).map(function (k) { return caches.delete(k); }));
+      // 只清理本应用的旧缓存：Cache Storage 按 origin 隔离，
+      // 同 origin 上其他应用（如另一个 Pages 项目的 PWA）的缓存不属于我们，
+      // 一并删掉会让对方的离线能力失效。
+      return Promise.all(keys.filter(function (k) {
+        return k.indexOf(CACHE_PREFIX) === 0 && k !== CACHE;
+      }).map(function (k) { return caches.delete(k); }));
     }).then(function () { return self.clients.claim(); })
   );
 });
