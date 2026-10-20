@@ -405,6 +405,88 @@ const SUITES = [
   },
 
   {
+    // RIR 类型不归一会让 chips()（=== 比较）所有档位落空，finishWorkout 又把字符串
+    // 原样写回记录——产出的备份连 validateDB 都拒绝（rir 必须是数字），变成一次性废纸。
+    name: "data · 字符串 RIR 归一为数字",
+    async run(page, t, base) {
+      await page.goto(base, { waitUntil: "networkidle" });
+      await page.evaluate(() => {
+        const z = n => String(n).padStart(2, "0");
+        const d = new Date(), date = d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate());
+        // 旧版草稿：逐动作 rir 是字符串，无训练级字段
+        localStorage.setItem("gym4.db.v1", JSON.stringify({
+          sessions: [],
+          drafts: {
+            ["w1@" + date]: {
+              key: "w1@" + date, dayId: "w1", date, startedAt: Date.now() - 6e5, touched: true,
+              moves: [{ index: 0, name: "坐姿推胸机", rir: "2", pain: 0,
+                sets: [{ weight: "80", reps: "9", done: true }] }],
+            },
+          },
+        }));
+      });
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(500);
+      await page.click('.nav-btn[data-tab="log"]');
+      await page.waitForTimeout(500);
+      await page.locator("#view .row-tap").first().click();
+      await page.waitForTimeout(700);
+
+      // 归一前这里会是 0 档选中：字符串 "2" !== 数字 2
+      const rirOn = await page.evaluate(() => {
+        const c = document.querySelectorAll(".wo-summary .chips")[0];
+        return [...c.querySelectorAll(".pick.on")].map(x => x.textContent);
+      });
+      t.eq(rirOn.length, 1, "字符串 RIR 打开后恰有一档选中：" + JSON.stringify(rirOn));
+      t.eq(rirOn[0], "RIR 2", "选中的是对应的那一档");
+
+      await page.click("#woFinishBtn");
+      await page.waitForTimeout(800);
+      const rec = await page.evaluate(() => {
+        const raw = JSON.parse(localStorage.getItem("gym4.db.v1"));
+        const s = raw.sessions[0];
+        return { rir: s && s.rir, rirType: s && typeof s.rir };
+      });
+      t.eq(rec.rirType, "number", "写入记录的 RIR 是数字（实得 " + rec.rirType + "）");
+      t.eq(rec.rir, 2, "写入记录的 RIR 值正确");
+
+      // 这份备份必须还能再导入，否则等于一次性废纸
+      const reimport = await page.evaluate(async () => {
+        const m = await import("./js/progress.js");
+        return m.validateDB(JSON.parse(localStorage.getItem("gym4.db.v1")));
+      });
+      t.eq(reimport, null, "归一后的备份能再次通过导入校验" + (reimport ? "：" + reimport : ""));
+
+      // 编辑入口同样归一：手改记录的 rir 是字符串时，训练页也要有档位选中
+      await page.evaluate(() => {
+        localStorage.setItem("gym4.db.v1", JSON.stringify({ sessions: [{
+          id: "strRir", dayId: "w1", date: "2026-10-16", durationMin: 40, maxPain: 2, rir: "3", note: "",
+          moves: [{ name: "坐姿推胸机", sets: [{ weight: "80", reps: "9", done: true }] }] }], drafts: {} }));
+      });
+      await page.reload({ waitUntil: "networkidle" });
+      await page.click('.nav-btn[data-tab="log"]');
+      await page.waitForTimeout(500);
+      await page.locator("#view .row-tap").first().click();
+      await page.waitForTimeout(400);
+      await page.click('#sheetFooter button:has-text("编辑这条记录")');
+      await page.waitForTimeout(700);
+      const editOn = await page.evaluate(() => {
+        const c = document.querySelectorAll(".wo-summary .chips")[0];
+        return [...c.querySelectorAll(".pick.on")].map(x => x.textContent);
+      });
+      t.eq(editOn.length, 1, "编辑字符串 RIR 的记录后恰有一档选中：" + JSON.stringify(editOn));
+      await page.click("#woFinishBtn");
+      await page.waitForTimeout(800);
+      const saved = await page.evaluate(() => {
+        const s = JSON.parse(localStorage.getItem("gym4.db.v1")).sessions[0];
+        return { rir: s && s.rir, rirType: s && typeof s.rir };
+      });
+      t.eq(saved.rirType, "number", "编辑保存后 RIR 仍是数字（实得 " + saved.rirType + "）");
+      t.eq(saved.rir, 3, "编辑保存后 RIR 值未被改写");
+    },
+  },
+
+  {
     name: "workout · 训练中与编辑",
     async run(page, t, base) {
       await page.goto(base, { waitUntil: "networkidle" });
@@ -1157,6 +1239,76 @@ const SUITES = [
       await other.locator("#view .check").first().click();
       await other.waitForTimeout(400);
       t.eq(await other.evaluate(() => JSON.parse(localStorage.getItem("gym4.db.v1")).sessions.length), 1, "B 保存时没有覆盖 A 的记录");
+      await other.close();
+    },
+  },
+
+  {
+    // 训练中（state.wo 非空）收到另一标签页的写入时，若只提醒不合并，
+    // 本标签页随后任何一次 saveDB()（含 300ms 输入防抖触发的那次）都会把内存里的
+    // 旧 sessions 整量写回，抹掉对方刚写入的记录。修复前实测记录数从 1 变 0。
+    name: "data · 训练中不覆盖另一标签页的写入",
+    async run(page, t, base) {
+      await page.goto(base, { waitUntil: "networkidle" });
+      await page.evaluate(() => localStorage.clear());
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(400);
+
+      const other = await page.context().newPage();
+      other.on("dialog", d => d.accept());
+      await other.goto(base, { waitUntil: "networkidle" });
+      await other.waitForTimeout(400);
+
+      // A 训练中：开 w1 并勾一组（草稿 touched=true，不会被当成空草稿清掉）
+      await page.evaluate(async () => {
+        const m = await import("./js/log.js");
+        m.openWorkout("w1", "2026-01-05");
+      });
+      await page.waitForTimeout(500);
+      await page.locator("#view .check").first().click();
+      await page.waitForTimeout(500);
+
+      // B 完成一次训练并写盘 → 触发 A 的 storage 事件（A 在训练中，只提醒+合并）
+      await other.evaluate(async () => {
+        const m = await import("./js/log.js");
+        m.openWorkout("w2", "2026-01-06");
+      });
+      await other.waitForTimeout(500);
+      await other.locator("#view .check").first().click();
+      await other.waitForTimeout(300);
+      await other.click("#woFinishBtn");
+      await other.waitForTimeout(800);
+
+      const afterB = await page.evaluate(() =>
+        JSON.parse(localStorage.getItem("gym4.db.v1")).sessions.length);
+      t.eq(afterB, 1, "B 完成后本地有 1 条记录");
+
+      // A 输入备注 → 300ms 防抖落盘。修复前这里会把 B 的记录整量抹掉
+      await page.locator("#view input[type=text]").first().fill("A 训练中的备注");
+      await page.waitForTimeout(1200);
+
+      const afterA = await page.evaluate(() => {
+        const raw = JSON.parse(localStorage.getItem("gym4.db.v1"));
+        return {
+          count: raw.sessions.length,
+          dates: raw.sessions.map(s => s.date).sort(),
+          // 合并不能把 A 正在编辑的草稿换成 B 的
+          draftKeys: Object.keys(raw.drafts),
+        };
+      });
+      // A 还在训练中（未完成），所以本地应只有 B 那 1 条；
+      // 修复前这里是 0 条——A 的防抖落盘把 B 的记录整量抹掉了
+      t.eq(afterA.count, 1, "A 输入落盘后记录数不减少（实得 " + afterA.count + " 条）");
+      t.ok(afterA.dates.includes("2026-01-06"), "B 的记录仍在：" + JSON.stringify(afterA.dates));
+      t.ok(afterA.draftKeys.includes("w1@2026-01-05"), "A 正在训练的草稿未被替换：" + JSON.stringify(afterA.draftKeys));
+
+      // A 的备注确实落盘了（合并不能以丢自己的输入为代价）
+      const note = await page.evaluate(() => {
+        const d = JSON.parse(localStorage.getItem("gym4.db.v1")).drafts["w1@2026-01-05"];
+        return d && d.note;
+      });
+      t.eq(note, "A 训练中的备注", "A 自己的输入也已落盘");
+
       await other.close();
     },
   },

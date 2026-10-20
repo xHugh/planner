@@ -50,12 +50,19 @@ document.addEventListener("navigate", e => {
   if (tab) go(tab);
 });
 
-// 另一个标签页改了数据：空闲时同步后重绘；训练中只提醒一次，避免用旧数据覆盖它
+// 本地库是「最后写入胜出」的整量写盘模型：训练中若只提醒不合并，本标签页随后任何一次
+// saveDB()（含输入防抖触发的那次）都会把内存里的旧 sessions 整量写回，抹掉对方刚写入的记录。
+// 草稿容器保持本标签页自己的：正在训练的草稿不能被对方的内容替换。
 let warnedOtherTab = false;
 window.addEventListener("storage", e => {
   if (e.key !== "gym4.db.v1" || !e.newValue) return;
   if (state.wo) {
-    if (!warnedOtherTab) { warnedOtherTab = true; toast("另一个标签页改了数据，这里的保存可能覆盖它"); }
+    // 去重按 id：loadDB() 每次 JSON.parse 都产生全新对象，引用比较（includes）对内存里
+    // 已有的记录也永远返回 false，会把已有记录再 push 一遍造成同 id 记录翻倍。
+    const fresh = loadDB();
+    const have = new Set(db.sessions.map(s => s.id));
+    fresh.sessions.forEach(s => { if (s && !have.has(s.id)) { db.sessions.push(s); have.add(s.id); } });
+    if (!warnedOtherTab) { warnedOtherTab = true; toast("另一个标签页改了数据，已并入这次的记录"); }
     return;
   }
   warnedOtherTab = false;
