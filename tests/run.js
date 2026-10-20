@@ -215,6 +215,26 @@ function contrastScan(selector) {
 // ---------- 用例 ----------
 const SUITES = [
   {
+    name: "flow · 红旗警示渲染",
+    async run(page, t, base) {
+      await page.goto(base, { waitUntil: "networkidle" });
+      await page.evaluate(() => localStorage.clear());
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(400);
+
+      const flagItems = await page.locator(".card-warn .rules-list li");
+      const { PLAN } = await page.evaluate(async () => {
+        const m = await import("./data.js");
+        return { PLAN: m.PLAN };
+      });
+      t.eq(await flagItems.count(), PLAN.redFlags.length, "红旗警示条目全部渲染");
+      t.ok((await page.locator(".card-warn .card-title").innerText()).includes("红旗警示"), "警示卡标题存在");
+      const first = await flagItems.first().innerText();
+      t.ok(PLAN.redFlags.includes(first), "警示条目内容与数据源一致（文本转义无损）");
+    },
+  },
+
+  {
     name: "flow · 训练完整流程",
     async run(page, t, base) {
       await page.goto(base, { waitUntil: "networkidle" });
@@ -941,6 +961,115 @@ const SUITES = [
       t.eq(recs.length, 1, "删除一条后只剩一条");
       t.eq(recs[0] && recs[0].date, "2026-10-17", "保留的是另一条，未被误删");
       t.eq(recs[0] && recs[0].moves[0].sets[0].weight, "70", "保留的记录内容未变");
+    },
+  },
+
+  {
+    name: "workout · 输入防抖落盘",
+    async run(page, t, base) {
+      await page.goto(base, { waitUntil: "networkidle" });
+      await page.evaluate(() => localStorage.clear());
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(400);
+
+      await openDay(page, "w1");
+      // 输入备注后不等防抖窗口，立即退出：内容不能丢
+      await page.locator("#view input[type=text]").first().fill("睡得不好");
+      await page.click("#woExitBtn");
+      await page.waitForTimeout(600);
+      const note = await page.evaluate(() => {
+        const d = JSON.parse(localStorage.getItem("gym4.db.v1"));
+        const k = Object.keys(d.drafts)[0];
+        return k ? d.drafts[k].note : null;
+      });
+      t.eq(note, "睡得不好", "输入后立即退出，备注不丢（退出时冲刷防抖）");
+
+      // 输入重量后等防抖窗口过去：内容要落盘
+      await page.locator("#view .row-tap").first().click();
+      await page.waitForTimeout(500);
+      await page.locator(".wo-move").first().locator("input").first().fill("60");
+      await page.waitForTimeout(600);
+      const w = await page.evaluate(() => {
+        const d = JSON.parse(localStorage.getItem("gym4.db.v1"));
+        const k = Object.keys(d.drafts)[0];
+        return d.drafts[k].moves[0].sets[0].weight;
+      });
+      t.eq(w, "60", "停手 300ms 后重量已落盘");
+
+      // 勾选一个组后立即退出：勾选与备注都在
+      await page.locator("#view .check").first().click();
+      await page.waitForTimeout(200);
+      await page.click("#woExitBtn");
+      await page.waitForTimeout(600);
+      const done = await page.evaluate(() => {
+        const d = JSON.parse(localStorage.getItem("gym4.db.v1"));
+        const k = Object.keys(d.drafts)[0];
+        return d.drafts[k].moves[0].sets[0].done;
+      });
+      t.eq(done, true, "勾选后退出，勾选状态保留");
+    },
+  },
+
+  {
+    name: "draft · 记录页草稿清理写盘失败回滚",
+    async run(page, t, base) {
+      await page.goto(base, { waitUntil: "networkidle" });
+      await page.evaluate(() => localStorage.clear());
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(400);
+
+      // 场景一：空草稿（touched=false 且没勾过组）被清理时写盘失败 → 内存里要回来
+      await page.evaluate(() => {
+        localStorage.setItem("gym4.db.v1", JSON.stringify({ sessions: [], drafts: {
+          "w1@2026-10-18": {
+            key: "w1@2026-10-18", dayId: "w1", date: "2026-10-18", touched: false,
+            moves: [{ index: 0, name: "坐姿推胸机", sets: [{ weight: "", reps: "", done: false }] }],
+          },
+        }}));
+      });
+      await page.reload({ waitUntil: "networkidle" });
+      await page.evaluate(() => {
+        window.__setItem = Storage.prototype.setItem;
+        Storage.prototype.setItem = function () { throw new Error("QuotaExceededError"); };
+      });
+      await page.click('.nav-btn[data-tab="log"]');
+      await page.waitForTimeout(500);
+      t.ok((await page.locator("#toast").innerText()).includes("存储失败"), "清理空草稿写盘失败时提示失败");
+      t.eq(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("gym4.db.v1")).drafts).length), 1,
+        "空草稿回到清理前状态（本地未写坏）");
+      await page.evaluate(() => { Storage.prototype.setItem = window.__setItem; });
+      // 恢复写盘后再次渲染：清理正常生效
+      await page.click('.nav-btn[data-tab="plan"]');
+      await page.waitForTimeout(300);
+      await page.click('.nav-btn[data-tab="log"]');
+      await page.waitForTimeout(500);
+      t.eq(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("gym4.db.v1")).drafts).length), 0,
+        "写盘恢复后空草稿被正常清理");
+
+      // 场景二：结构损坏的草稿被清理时写盘失败 → 容器整体回滚
+      await page.evaluate(() => {
+        localStorage.setItem("gym4.db.v1", JSON.stringify({
+          sessions: [],
+          drafts: {
+            "w1@2026-10-18": { key: "w1@2026-10-18", dayId: "w1", date: "2026-10-18", touched: false },
+            "x@2026-10-19": "not-an-object",
+          },
+        }));
+      });
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(400);
+      await page.evaluate(() => {
+        window.__setItem = Storage.prototype.setItem;
+        Storage.prototype.setItem = function () { throw new Error("QuotaExceededError"); };
+      });
+      await page.click('.nav-btn[data-tab="log"]');
+      await page.waitForTimeout(500);
+      t.ok((await page.locator("#toast").innerText()).includes("存储失败"), "清理坏草稿写盘失败时提示失败");
+      t.ok(await page.evaluate(() => {
+        const d = JSON.parse(localStorage.getItem("gym4.db.v1")).drafts;
+        return "w1@2026-10-18" in d && "x@2026-10-19" in d;
+      }), "坏草稿容器回到清理前状态");
+      await page.evaluate(() => { Storage.prototype.setItem = window.__setItem; });
     },
   },
 

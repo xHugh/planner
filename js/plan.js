@@ -75,6 +75,15 @@ export function renderPlan(view, subEl) {
     <div class="card-title">🛡 减伤规则</div>
     <ol class="rules-list">${list(PLAN.rules, r => "<li>" + esc(r) + "</li>")}</ol>`;
   view.appendChild(rc);
+
+  // 红旗警示：出现这些信号应停练并考虑就医；数据源为空时不渲染
+  if (PLAN.redFlags && PLAN.redFlags.length) {
+    const rf = el("div", "card card-warn");
+    rf.innerHTML = html`
+      <div class="card-title card-title-danger">🚩 红旗警示 · 出现即停练</div>
+      <ul class="rules-list">${list(PLAN.redFlags, r => "<li>" + esc(r) + "</li>")}</ul>`;
+    view.appendChild(rf);
+  }
 }
 
 export function showRestSheet(dayIdx) {

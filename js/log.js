@@ -107,7 +107,7 @@ function withLegacy(move, rec) {
   return move;
 }
 
-// 疼痛只有偶数档；旧记录的 9 吸附到 10，避免编辑时没有任何一档选中
+// 疼痛只有偶数档；旧记录的奇数值向上取偶（1→2、9→10），避免编辑时没有任何一档选中
 function snapPain(v) {
   const n = +v;
   if (!Number.isFinite(n)) return 0;
@@ -161,6 +161,8 @@ export function renderLog(view, subEl) {
 
   // 清理僵尸草稿：开了训练但什么都没动就退出；结构坏掉的草稿也一并删掉
   // normalizeDrafts() 顺带把草稿键归一化到 dayId@date（导入/手改的草稿可能存在别的键下）
+  // 与其他写入口径一致：清理前先快照，写盘失败时整体恢复，不得在提示失败的同时丢数据
+  const prevDrafts = db.drafts;
   let dropped = normalizeDrafts();
   Object.keys(db.drafts).forEach(k => {
     const dr = db.drafts[k];
@@ -169,7 +171,7 @@ export function renderLog(view, subEl) {
       dropped = true;
     }
   });
-  if (dropped) saveDB();
+  if (dropped && !saveDB()) db.drafts = prevDrafts;
 
   const keys = Object.keys(db.drafts);
   if (keys.length) {
@@ -358,6 +360,32 @@ function fmtElapsed(ms) {
 function stopTimer() {
   if (state.wo && state.wo.timerId) { clearInterval(state.wo.timerId); state.wo.timerId = null; }
 }
+
+/* ---------------- 输入防抖落盘 ----------------
+   备注 / 重量 / 次数这类高频输入只写内存，攒 300ms 再落盘，
+   免得每个按键都全量 JSON.stringify 一遍 db。
+   冲刷：退出训练、完成训练、切后台、pagehide 等既有落盘点
+   会先调 flushPendingSave()，防抖窗口内的输入不会丢。 */
+const INPUT_SAVE_DELAY = 300;
+function clearPendingSave(wo) {
+  if (wo && wo.pendingSave) { clearTimeout(wo.pendingSave); wo.pendingSave = null; }
+}
+function flushPendingSave(wo) {
+  if (!wo || !wo.pendingSave) return;
+  clearPendingSave(wo);
+  saveDB();
+}
+// 输入回调统一走这里：写内存 + 重启防抖定时器；低频操作（勾选、chips）
+// 直接 saveDB() 前也先 clearPendingSave，避免随后的防抖重复写盘
+function queueSave() {
+  const wo = state.wo;
+  if (!wo) { saveDB(); return; }
+  clearPendingSave(wo);
+  wo.pendingSave = setTimeout(() => {
+    wo.pendingSave = null;
+    saveDB();
+  }, INPUT_SAVE_DELAY);
+}
 function tickTimer() {
   const wo = state.wo;
   if (!wo) return;
@@ -375,7 +403,9 @@ document.addEventListener("visibilitychange", () => {
   if (!state.wo) return;
   if (document.hidden) {
     pauseClock(state.wo.draft);
-    // 暂停后立刻落盘：页面被刷新、被关掉时，已累计的时长不能丢
+    // 暂停后立刻落盘：页面被刷新、被关掉时，已累计的时长不能丢。
+    // 先冲刷防抖窗口内的输入，再整体写盘
+    flushPendingSave(state.wo);
     saveDB();
     stopTimer();
   } else { resumeClock(state.wo.draft); startTimer(); }
@@ -387,6 +417,7 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("pagehide", () => {
   if (!state.wo) return;
   pauseClock(state.wo.draft);
+  flushPendingSave(state.wo);
   saveDB();
 });
 
@@ -483,7 +514,7 @@ export function openWorkout(dayId, date, opts) {
 }
 
 export function closeWorkout(save) {
-  if (state.wo) pauseClock(state.wo.draft);
+  if (state.wo) { pauseClock(state.wo.draft); flushPendingSave(state.wo); }
   if (save && !saveDB()) {
     // 没写进磁盘就别退出训练页，时钟接着走，让用户能重试
     if (state.wo) { resumeClock(state.wo.draft); startTimer(); }
@@ -519,7 +550,7 @@ export function renderWorkout(d) {
   head.appendChild(chips(
     [0, 1, 2, 3, 4].map(v => ({ v, label: "RIR " + v, warn: v <= 1 })),
     dr.rir,
-    v => { markDirty(); dr.rir = v; dr.touched = true; saveDB(); }
+    v => { markDirty(); dr.rir = v; dr.touched = true; clearPendingSave(wo); saveDB(); }
   ));
 
   head.appendChild(el("label", "field-label", "疼痛评分（0 = 无痛，10 = 无法忍受）"));
@@ -530,7 +561,8 @@ export function renderWorkout(d) {
     painShown,
     v => {
       markDirty();
-      dr.pain = v; dr.touched = true; saveDB();
+      dr.pain = v; dr.touched = true;
+      clearPendingSave(wo); saveDB();
       if (v >= 4) toast("疼痛 ≥4：停止该动作并考虑就医");
     }
   ));
@@ -540,7 +572,7 @@ export function renderWorkout(d) {
   note.type = "text";
   note.placeholder = "例如：睡眠不足，整体降了 5kg";
   note.value = dr.note || "";
-  note.oninput = () => { markDirty(); dr.note = note.value; dr.touched = true; saveDB(); };
+  note.oninput = () => { markDirty(); dr.note = note.value; dr.touched = true; queueSave(); };
   head.appendChild(note);
   view.appendChild(head);
 
@@ -594,9 +626,9 @@ export function renderWorkout(d) {
           s.done = !s.done;
           if (s.done && !s.reps && !extra) s.reps = m.lo;
           dr.touched = true;
-          saveDB();
+          clearPendingSave(wo); saveDB();
         },
-        (field, value) => { markDirty(); s[field] = value; dr.touched = true; saveDB(); }
+        (field, value) => { markDirty(); s[field] = value; dr.touched = true; queueSave(); }
       ));
     });
 
@@ -608,6 +640,7 @@ export function renderWorkout(d) {
         markDirty();
         st.sets.forEach(s => { s.weight = target.weight; });
         dr.touched = true;
+        clearPendingSave(wo);
         saveDB();
         renderWorkout(d);
         toast("已填入 " + target.weight + " kg");
@@ -660,8 +693,13 @@ document.addEventListener("click", e => {
 export function finishWorkout(d) {
   const { wo } = state;
   const dr = wo.draft;
+  // 冲刷防抖窗口内的输入，随后整体写盘，别丢最后一截输入。
+  // 先暂停时钟取准时长；用户在任何确认框里取消时恢复时钟接着走
+  const wasRunning = !!dr.lastResumedAt;
+  pauseClock(dr); flushPendingSave(wo);
+  const cancelClock = () => { if (wasRunning) resumeClock(dr); };
   const c = countDone(dr);
-  if (!c.done) { toast("还没有勾选任何一组"); return; }
+  if (!c.done) { toast("还没有勾选任何一组"); cancelClock(); return; }
 
   // 兼容旧版草稿：逐动作疼痛取最大值并入训练级
   const legacyPain = Math.max(...dr.moves.map(m => m.pain || 0), 0);
@@ -679,10 +717,10 @@ export function finishWorkout(d) {
 
   if (wo.editingId) {
     // 编辑模式：覆盖原记录，id 与时长保持不变
-    if (!confirm(`保存修改？将更新 ${fmtDate(dr.date)} 的这条记录。`)) return;
+    if (!confirm(`保存修改？将更新 ${fmtDate(dr.date)} 的这条记录。`)) { cancelClock(); return; }
     // 按打开编辑时的记录对象定位；对象不在当前数组（跨标签页同步替换过）走既有提示
     const idx = db.sessions.indexOf(wo.editingRef);
-    if (idx < 0) { toast("这条记录已经不在了"); return; }
+    if (idx < 0) { toast("这条记录已经不在了"); cancelClock(); return; }
     const before = db.sessions[idx];
     db.sessions[idx] = {
       ...before,
@@ -691,7 +729,7 @@ export function finishWorkout(d) {
       maxPain: Math.max(dr.pain || 0, legacyPain),
       note: dr.note || "",
     };
-    if (!saveDB()) { db.sessions[idx] = before; return; }
+    if (!saveDB()) { db.sessions[idx] = before; cancelClock(); return; }
     stopTimer();
     state.wo = null;
     setWorkoutMode(false);
@@ -700,7 +738,7 @@ export function finishWorkout(d) {
     return;
   }
 
-  if (!confirm(`完成这次训练？已完成 ${c.done}/${c.total} 组`)) return;
+  if (!confirm(`完成这次训练？已完成 ${c.done}/${c.total} 组`)) { cancelClock(); return; }
 
   const duration = Math.round(elapsedOf(dr) / 60000);
   db.sessions.push({
@@ -719,6 +757,7 @@ export function finishWorkout(d) {
     // 写盘失败：回滚内存状态，训练页保持打开，错误提示留在屏幕上
     db.sessions.pop();
     db.drafts[dk] = dr;
+    cancelClock();
     return;
   }
   stopTimer();
