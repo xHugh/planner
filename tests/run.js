@@ -183,6 +183,12 @@ async function openToday(page, dayId) {
   }
 }
 
+// 计时显示 "mm:ss" → 秒。用 split 解析，不能用 slice(0,2)：分钟 ≥100 时会算出 NaN
+function toSec(s) {
+  const [m, sec] = String(s).split(":").map(Number);
+  return m * 60 + sec;
+}
+
 // ---------- 页面内跑的对比度扫描 ----------
 // 半透明背景要逐层合成，否则算出来的对比度是假的
 function contrastScan(selector) {
@@ -211,6 +217,8 @@ function contrastScan(selector) {
     const st = getComputedStyle(el);
     const size = parseFloat(st.fontSize), weight = +st.fontWeight || 400;
     const fg = parse(st.color);
+    // 渐变裁剪文字的 color 是 transparent，会被当成黑字算出假的高对比度——直接判失败
+    if (fg.a === 0) { out.push(`${el.className.split(" ")[0]} transparent`); return; }
     const [hi, lo] = [lum(fg.rgb), lum(bgOf(el))].sort((a, b) => b - a);
     const r = (hi + 0.05) / (lo + 0.05);
     const need = (size >= 18.66 || (size >= 14 && weight >= 700)) ? 3 : 4.5;
@@ -900,7 +908,6 @@ const SUITES = [
 
       t.ok(/^\d{2}:\d{2}$/.test(before), `刷新前有计时：${before}`);
       t.ok(/^\d{2}:\d{2}$/.test(after), `刷新后有计时：${after}`);
-      const toSec = s => +s.slice(0, 2) * 60 + +s.slice(3);
       t.ok(toSec(after) >= toSec(before), `刷新后计时不倒退（${before} → ${after}）`);
     },
   },
@@ -935,7 +942,6 @@ const SUITES = [
       await page.waitForTimeout(800);
 
       const shown = await page.locator("#woDockTimer").innerText();
-      const toSec = s => +s.slice(0, 2) * 60 + +s.slice(3);
       t.ok(toSec(shown) < 60, `旧草稿恢复后时长从 0 起算（显示 ${shown}）`);
 
       // 完成训练：写入记录的时长必须与实际操作一致，不能是数天
@@ -1157,6 +1163,10 @@ const SUITES = [
       t.ok((await page.locator("#toast").innerText()).includes("存储失败"), "清理空草稿写盘失败时提示失败");
       t.eq(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("gym4.db.v1")).drafts).length), 1,
         "空草稿回到清理前状态（本地未写坏）");
+      // UI 子句：界面按回滚后的列表渲染，草稿行要重新出现，不得出现「磁盘上有、界面看不见」
+      t.eq(await page.locator("#view .section-h", { hasText: "未完成的训练" }).count(), 1,
+        "写盘失败后「未完成的训练」标题仍在");
+      t.eq(await page.locator("#view .row-tap").count(), 1, "写盘失败后草稿行仍在未完成列表里");
       await page.evaluate(() => { Storage.prototype.setItem = window.__setItem; });
       // 恢复写盘后再次渲染：清理正常生效
       await page.click('.nav-btn[data-tab="plan"]');
@@ -1667,15 +1677,25 @@ const SUITES = [
           key: "w1@2026-01-05", dayId: "w1", date: "2026-01-05",
           moves: [{ name: "坐姿推胸机", sets: [{ weight: "80", reps: "9", done: true }] }],
         }, extra) } });
+        // 空 moves 的草稿也要拦：计时校验曾嵌在按动作的循环里，moves:[] 会整段跳过
+        const mkEmpty = extra => ({ sessions: [], drafts: { "w1@2026-01-05": Object.assign({
+          key: "w1@2026-01-05", dayId: "w1", date: "2026-01-05", moves: [],
+        }, extra) } });
         return {
           badElapsed: m.validateDB(mk({ elapsedMs: "abc" })),
           badResumed: m.validateDB(mk({ lastResumedAt: "xyz" })),
+          badEmptyElapsed: m.validateDB(mkEmpty({ elapsedMs: "abc" })),
+          badEmptyResumed: m.validateDB(mkEmpty({ lastResumedAt: "xyz" })),
           okNull: m.validateDB(mk({ elapsedMs: 600000, lastResumedAt: null })),
+          okEmpty: m.validateDB(mkEmpty({})),
         };
       });
       t.ok(v.badElapsed && v.badElapsed.includes("elapsedMs"), "非数字 elapsedMs 被拒：" + v.badElapsed);
       t.ok(v.badResumed && v.badResumed.includes("lastResumedAt"), "非数字 lastResumedAt 被拒：" + v.badResumed);
+      t.ok(v.badEmptyElapsed && v.badEmptyElapsed.includes("elapsedMs"), "空 moves 草稿的非数字 elapsedMs 被拒：" + v.badEmptyElapsed);
+      t.ok(v.badEmptyResumed && v.badEmptyResumed.includes("lastResumedAt"), "空 moves 草稿的非数字 lastResumedAt 被拒：" + v.badEmptyResumed);
       t.eq(v.okNull, null, "合法的计时字段通过校验");
+      t.eq(v.okEmpty, null, "空 moves 的合法草稿通过校验");
 
       await page.evaluate(() => {
         localStorage.setItem("gym4.db.v1", JSON.stringify({ sessions: [{ id: "keep", date: "2026-01-01", dayId: "w1",
@@ -1931,8 +1951,6 @@ const SUITES = [
       await page.waitForTimeout(800);
 
       const shown = (await page.locator("#woDockTimer").innerText()).trim();
-      // 分钟数可能超过两位（130:00），不能用 slice(0,2)
-      const toSec = str => { const [m, sec] = str.split(":").map(Number); return m * 60 + sec; };
       const sec = toSec(shown);
       t.ok(sec <= 600 + 7200 + 15, "整夜中断只补 2 小时上限（10 分钟 + 2 小时）：" + shown);
       t.ok(sec >= 600 + 7200 - 15, "确实补到了 2 小时上限：" + shown);
@@ -2053,8 +2071,8 @@ const SUITES = [
         });
         t.ok(small.length === 0, `[${scheme}] 触摸目标均 ≥44px${small.length ? ": " + small.join(", ") : ""}`);
 
-        // 文字对比度 ≥4.5:1（含此前漏检的嵌套 span 与告警卡）
-        const sel = ".move-tip, .card-sub, .row-sub, .stat span, .stat b, .section-h, .move-meta, .set-head, .prev, .field-label, .card-title, .row-title, .text-danger-strong, .card-warn .card-sub, .card-warn .card-title";
+        // 文字对比度 ≥4.5:1（含此前漏检的嵌套 span 与告警卡；.appbar-title 也纳入扫描）
+        const sel = ".move-tip, .card-sub, .row-sub, .stat span, .stat b, .section-h, .move-meta, .set-head, .prev, .field-label, .card-title, .row-title, .text-danger-strong, .card-warn .card-sub, .card-warn .card-title, .appbar-title";
         const lowContrast = await page.evaluate(contrastScan, sel);
         t.ok(lowContrast.length === 0, `[${scheme}] 文字对比度达标${lowContrast.length ? ": " + lowContrast.join(", ") : ""}`);
 
@@ -2073,6 +2091,12 @@ const SUITES = [
           return el ? getComputedStyle(el).color : "";
         });
         t.ok(statColor && !/rgba\(.*,\s*0\)/.test(statColor), `[${scheme}] 统计数值用实色而非渐变裁剪（color=${statColor}）`);
+        // 应用栏标题曾是渐变裁剪文字：滚动后浅色主题实测掉到 2.54:1，必须用实色
+        const appbarColor = await page.evaluate(() => {
+          const el = document.querySelector(".appbar-title");
+          return el ? getComputedStyle(el).color : "";
+        });
+        t.ok(appbarColor && !/rgba\(.*,\s*0\)/.test(appbarColor), `[${scheme}] 应用栏标题用实色而非渐变裁剪（color=${appbarColor}）`);
         t.ok(await page.locator(".card-warn").count() >= 1, `[${scheme}] 疼痛告警卡存在`);
 
         // 导航语义

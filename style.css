@@ -216,10 +216,7 @@ body::before {
   font-size: 21px;
   font-weight: 800;
   letter-spacing: -.4px;
-  background: linear-gradient(100deg, var(--brand-1), var(--brand-2));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--brand-1);
 }
 .appbar-sub {
   font-size: 12px;

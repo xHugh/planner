@@ -380,17 +380,18 @@ export function validateDB(d) {
       if (!dr || typeof dr !== "object" || Array.isArray(dr)) return `草稿 ${k} 不是对象`;
       if (typeof dr.dayId !== "string" || typeof dr.date !== "string") return `草稿 ${k} 缺少训练日或日期`;
       if (!Array.isArray(dr.moves)) return `草稿 ${k} 缺少 moves`;
+      // 计时字段必须是数字：坏值会让计时器显示 NaN、写进记录的时长变成 null。
+      // 按草稿层级校验，不能嵌进按动作的循环——moves 为空时也要拦住
+      for (const f of ["elapsedMs", "lastResumedAt"]) {
+        const v = dr[f];
+        if (v != null && (typeof v !== "number" || !Number.isFinite(v))) {
+          return `草稿 ${k} 的 ${f} 必须是数字`;
+        }
+      }
       for (const m of dr.moves) {
         if (!m || typeof m.name !== "string" || !Array.isArray(m.sets)) return `草稿 ${k} 的动作数据无效`;
         for (const st of m.sets) {
           if (!st || typeof st !== "object") return `草稿 ${k} 有无效的组`;
-        }
-        // 计时字段必须是数字：坏值会让计时器显示 NaN、写进记录的时长变成 null
-        for (const f of ["elapsedMs", "lastResumedAt"]) {
-          const v = dr[f];
-          if (v != null && (typeof v !== "number" || !Number.isFinite(v))) {
-            return `草稿 ${k} 的 ${f} 必须是数字`;
-          }
         }
       }
     }
